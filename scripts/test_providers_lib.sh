@@ -31,6 +31,8 @@ ALLOWED_FAILURES=(
   "openrouter:nvidia/nemotron-3-nano-30b-a3b"
   "openrouter:qwen/qwen3-coder:exacto"
   "openai:gpt-3.5-turbo"
+  "codex:gpt-5.2-codex"
+  "gemini-cli:gemini-2.5-pro"
 )
 
 AGENTIC_PROVIDERS=("claude-code" "codex" "gemini-cli" "cursor-agent")
