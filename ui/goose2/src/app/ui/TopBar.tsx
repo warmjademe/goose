@@ -62,26 +62,26 @@ export function TopBar({
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           onClick={onToggleSidebar}
-          className="text-muted-foreground hover:text-foreground"
+          className="-translate-y-[3px] text-muted-foreground hover:text-foreground"
           aria-label={toggleLabel}
           title={toggleLabel}
         >
-          <ToggleIcon className="size-4" />
+          <ToggleIcon className="size-5" />
         </Button>
       )}
       {onNavigate && (
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           onClick={() => onNavigate("search")}
-          className="text-muted-foreground hover:text-foreground"
+          className="-translate-y-[3px] text-muted-foreground hover:text-foreground"
           aria-label={tCommon("actions.search")}
           title={tCommon("actions.search")}
         >
-          <IconSearch className="size-4" />
+          <IconSearch className="size-5" />
         </Button>
       )}
       <h1
