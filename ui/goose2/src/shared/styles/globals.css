@@ -423,15 +423,38 @@
   --sidebar-ring: var(--border-default);
 }
 
-/* Alex redesign — dot-grid canvas utility */
+/* Alex redesign — dot-grid canvas utility.
+   Composes a subtle project tint over the base canvas + dot color via
+   color-mix(). When --project-tint is unset/transparent, both expressions
+   resolve cleanly back to the base values, so non-project surfaces are
+   pixel-identical to pre-tint. oklch is chosen so the perceived tint
+   weight is consistent across saturated and cool palette colors. */
 .bg-dot-grid {
-  background-color: var(--canvas-base);
+  background-color: color-mix(
+    in oklch,
+    var(--project-tint, transparent) 7%,
+    var(--canvas-base)
+  );
   background-image: radial-gradient(
     circle,
-    var(--dot-color-base) var(--dot-size),
+    color-mix(
+        in oklch,
+        var(--project-tint, transparent) 12%,
+        var(--dot-color-base)
+      )
+      var(--dot-size),
     transparent var(--dot-size)
   );
   background-size: var(--dot-spacing) var(--dot-spacing);
+  transition:
+    background-color 240ms ease,
+    background-image 240ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-dot-grid {
+    transition: none;
+  }
 }
 
 @theme inline {
