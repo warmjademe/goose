@@ -1,7 +1,7 @@
 use crate::agents::extension::PlatformExtensionContext;
 use crate::agents::mcp_client::{Error, McpClientTrait};
 use crate::agents::tool_execution::ToolCallContext;
-use crate::config::get_extension_by_name;
+use crate::config::{get_extension_by_name, set_extension_enabled_by_name};
 use anyhow::Result;
 use async_trait::async_trait;
 use indoc::indoc;
@@ -162,16 +162,17 @@ impl ExtensionManagerClient {
             })?;
 
         if action == ManageExtensionAction::Disable {
-            return extension_manager
+            extension_manager
                 .remove_extension(&extension_name)
                 .await
-                .map(|_| {
-                    vec![Content::text(format!(
-                        "The extension '{}' has been disabled successfully",
-                        extension_name
-                    ))]
-                })
-                .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None));
+                .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
+
+            set_extension_enabled_by_name(&extension_name, false);
+
+            return Ok(vec![Content::text(format!(
+                "The extension '{}' has been disabled successfully",
+                extension_name
+            ))]);
         }
 
         let config = match get_extension_by_name(&extension_name) {
@@ -187,17 +188,28 @@ impl ExtensionManagerClient {
                 ));
             }
         };
+        let config_name = config.name();
 
         extension_manager
             .add_extension(config, None, None, None)
             .await
-            .map(|_| {
-                vec![Content::text(format!(
-                    "The extension '{}' has been installed successfully",
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
+
+        if !set_extension_enabled_by_name(&config_name, true) {
+            return Err(ErrorData::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!(
+                    "Extension '{}' was enabled for this session but could not be saved to config",
                     extension_name
-                ))]
-            })
-            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))
+                ),
+                None,
+            ));
+        }
+
+        Ok(vec![Content::text(format!(
+            "The extension '{}' has been enabled successfully",
+            extension_name
+        ))])
     }
 
     async fn handle_list_resources(
