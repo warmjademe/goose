@@ -1,4 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
@@ -36,6 +42,8 @@ const NAV_ITEMS = [
   { id: "about", labelKey: "nav.about", icon: Info },
 ] as const;
 
+const BACKDROP_CLOSE_DRAG_THRESHOLD = 4;
+
 export type SectionId = (typeof NAV_ITEMS)[number]["id"];
 
 interface SettingsModalProps {
@@ -51,6 +59,7 @@ export function SettingsModal({
   const [activeSection, setActiveSection] = useState<SectionId>(initialSection);
   const [isLoaded, setIsLoaded] = useState(false);
   const modalRootRef = useRef<HTMLDivElement>(null);
+  const backdropPointerDownRef = useRef<{ x: number; y: number } | null>(null);
 
   // Trigger entrance animations after mount
   useEffect(() => {
@@ -85,27 +94,61 @@ export function SettingsModal({
   const activeSectionLabel =
     navItems.find((item) => item.id === activeSection)?.label ?? t("title");
 
+  const handleBackdropPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) {
+      backdropPointerDownRef.current = null;
+      return;
+    }
+    backdropPointerDownRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+  };
+
+  const handleBackdropClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+
+    const pointerDown = backdropPointerDownRef.current;
+    backdropPointerDownRef.current = null;
+
+    if (!pointerDown) {
+      onClose();
+      return;
+    }
+
+    const deltaX = event.clientX - pointerDown.x;
+    const deltaY = event.clientY - pointerDown.y;
+    const moved = Math.hypot(deltaX, deltaY);
+    if (moved <= BACKDROP_CLOSE_DRAG_THRESHOLD) {
+      onClose();
+    }
+  };
+
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: Escape is handled by the document listener while the backdrop only handles pointer dismissal.
     <div
       ref={modalRootRef}
       role="dialog"
       aria-modal="true"
       aria-label={activeSectionLabel}
       className={cn(
-        "fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm transition-opacity duration-300",
+        "fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-300",
         isLoaded ? "opacity-100" : "opacity-0",
       )}
-      onClick={onClose}
     >
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation on inner container is not a meaningful interaction */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: click handler only prevents backdrop dismiss propagation */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: Escape is handled by the document listener while the backdrop only handles pointer dismissal. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop distinguishes click dismissal from window dragging. */}
+      <div
+        data-testid="settings-backdrop"
+        data-tauri-drag-region
+        className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+        onPointerDown={handleBackdropPointerDown}
+        onClick={handleBackdropClick}
+      />
       <div
         className={cn(
-          "flex h-[min(600px,calc(100vh-4rem))] w-[calc(100vw-2rem)] max-w-3xl overflow-hidden rounded-xl border bg-background shadow-modal transition-opacity duration-300 ease-out",
+          "relative z-10 flex h-[min(600px,calc(100vh-4rem))] w-[calc(100vw-2rem)] max-w-3xl overflow-hidden rounded-xl border bg-background shadow-modal transition-opacity duration-300 ease-out",
           isLoaded ? "opacity-100" : "opacity-0",
         )}
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Sidebar */}
         <div
