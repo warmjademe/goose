@@ -369,6 +369,8 @@ export function useChatSessionController({
       );
       if (matchingAgent) {
         agentStore.setActiveAgent(matchingAgent.id);
+      } else {
+        agentStore.setActiveAgent(null);
       }
       if (!sessionId) {
         setPendingPersonaId(personaId);

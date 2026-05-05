@@ -366,6 +366,52 @@ describe("useChatSessionController", () => {
     });
   });
 
+  it("clears the active agent when switching to a persona without an agent mapping", () => {
+    useAgentStore.setState({
+      activeAgentId: "agent-reviewer",
+      agents: [
+        {
+          id: "agent-reviewer",
+          name: "Reviewer",
+          personaId: "persona-reviewer",
+          provider: "openai",
+          model: "gpt-4o",
+          connectionType: "acp",
+          status: "online",
+          isBuiltin: false,
+          createdAt: "2026-04-20T00:00:00.000Z",
+          updatedAt: "2026-04-20T00:00:00.000Z",
+        },
+      ],
+      personas: [
+        {
+          id: "persona-imported",
+          displayName: "Imported",
+          systemPrompt: "Use the imported persona.",
+          isBuiltin: false,
+          isFromDisk: true,
+          createdAt: "2026-04-20T00:00:00.000Z",
+          updatedAt: "2026-04-20T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const { result } = renderHook(() =>
+      useChatSessionController({ sessionId: "session-1" }),
+    );
+
+    act(() => {
+      result.current.handlePersonaChange("persona-imported");
+    });
+
+    expect(useAgentStore.getState().activeAgentId).toBeNull();
+    expect(
+      useChatSessionStore.getState().getSession("session-1"),
+    ).toMatchObject({
+      personaId: "persona-imported",
+    });
+  });
+
   it("does not persist or record a pending Home model when ACP rejects it", async () => {
     mockAcpSetModel.mockRejectedValueOnce(new Error("set model failed"));
 

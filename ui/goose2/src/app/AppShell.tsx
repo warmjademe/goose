@@ -380,6 +380,8 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         .agents.find((agent) => agent.personaId === persona.id);
       if (matchingAgent) {
         useAgentStore.getState().setActiveAgent(matchingAgent.id);
+      } else {
+        useAgentStore.getState().setActiveAgent(null);
       }
 
       void createNewTab(DEFAULT_CHAT_TITLE, undefined, { persona }).catch(
