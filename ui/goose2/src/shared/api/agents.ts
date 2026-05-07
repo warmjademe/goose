@@ -52,7 +52,7 @@ function personaMetadata(
 function toPersona(source: AgentSourceEntry): Persona {
   const writable = source.writable !== false;
   return {
-    id: source.directory,
+    id: source.path,
     displayName: source.name,
     avatar: metadataToAvatar(source.metadata?.avatar),
     systemPrompt: source.content,
@@ -76,7 +76,7 @@ async function listAgentSources(): Promise<AgentSourceEntry[]> {
 
 async function getAgentSource(id: string): Promise<AgentSourceEntry> {
   const source = (await listAgentSources()).find(
-    (source) => source.directory === id,
+    (source) => source.path === id,
   );
   if (!source) {
     throw new Error(`Agent '${id}' not found`);

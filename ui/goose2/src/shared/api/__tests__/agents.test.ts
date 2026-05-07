@@ -39,7 +39,7 @@ const source = {
   name: "Scout",
   description: "Agent",
   content: "Research carefully.",
-  directory: "/Users/test/.agents/agents/scout.md",
+  path: "/Users/test/.agents/agents/scout.md",
   global: true,
   writable: true,
   metadata: {
@@ -62,7 +62,7 @@ describe("agents API", () => {
     expect(mockGooseSourcesList).toHaveBeenCalledWith({ type: "agent" });
     expect(result).toEqual([
       {
-        id: source.directory,
+        id: source.path,
         displayName: "Scout",
         avatar: { type: "url", value: source.metadata.avatar },
         systemPrompt: "Research carefully.",
@@ -109,13 +109,13 @@ describe("agents API", () => {
       source: { ...source, name: "Scout 2" },
     });
 
-    const result = await updatePersona(source.directory, {
+    const result = await updatePersona(source.path, {
       displayName: "Scout 2",
     });
 
     expect(mockGooseSourcesUpdate).toHaveBeenCalledWith({
       type: "agent",
-      path: source.directory,
+      path: source.path,
       name: "Scout 2",
       description: "Agent",
       content: "Research carefully.",
@@ -131,11 +131,11 @@ describe("agents API", () => {
   it("deletePersona deletes an agent source by path", async () => {
     mockGooseSourcesDelete.mockResolvedValue(undefined);
 
-    await deletePersona(source.directory);
+    await deletePersona(source.path);
 
     expect(mockGooseSourcesDelete).toHaveBeenCalledWith({
       type: "agent",
-      path: source.directory,
+      path: source.path,
     });
   });
 
@@ -145,11 +145,11 @@ describe("agents API", () => {
       filename: "scout.agent.json",
     });
 
-    const result = await exportPersona(source.directory);
+    const result = await exportPersona(source.path);
 
     expect(mockGooseSourcesExport).toHaveBeenCalledWith({
       type: "agent",
-      path: source.directory,
+      path: source.path,
     });
     expect(result).toEqual({
       json: '{"type":"agent"}',
