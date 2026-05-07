@@ -85,10 +85,10 @@ impl GooseServeProcess {
             }
         }
 
+        command.arg("serve");
         add_bundled_agent_root(&app_handle, &mut command);
 
         command
-            .arg("serve")
             .arg("--host")
             .arg(LOCALHOST)
             .arg("--port")
