@@ -86,7 +86,7 @@ fn build_source_md<T: Serialize>(frontmatter: &T, content: &str) -> Result<Strin
     Ok(md)
 }
 
-fn build_project_md(
+fn build_source_markdown(
     name: &str,
     description: &str,
     content: &str,
@@ -301,28 +301,6 @@ fn builtin_skill_entry(mut source: SourceEntry) -> SourceEntry {
     source
 }
 
-fn agent_source_entry_from_parts(
-    name: &str,
-    description: &str,
-    content: &str,
-    path: &Path,
-    global: bool,
-    properties: HashMap<String, serde_json::Value>,
-    writable: bool,
-) -> SourceEntry {
-    SourceEntry {
-        source_type: SourceType::Agent,
-        name: name.to_string(),
-        description: description.to_string(),
-        content: content.to_string(),
-        path: path.to_string_lossy().to_string(),
-        global,
-        writable,
-        supporting_files: Vec::new(),
-        properties,
-    }
-}
-
 fn agent_base_dir(global: bool, project_dir: Option<&str>) -> Result<PathBuf, Error> {
     if global {
         Ok(Paths::agents_dir())
@@ -391,15 +369,6 @@ fn slugify_agent_name(name: &str) -> String {
     }
 }
 
-fn build_agent_md(
-    name: &str,
-    description: &str,
-    content: &str,
-    properties: &HashMap<String, serde_json::Value>,
-) -> Result<String, Error> {
-    build_project_md(name, description, content, properties)
-}
-
 fn parse_agent_frontmatter(raw: &str) -> Result<(MarkdownSourceFrontmatter, String), Error> {
     parse_frontmatter::<MarkdownSourceFrontmatter>(raw)
         .map_err(|e| Error::invalid_params().data(format!("Invalid agent frontmatter: {e}")))?
@@ -410,15 +379,19 @@ fn agent_source_entry(path: &Path, global: bool, writable: bool) -> Result<Sourc
     let raw = fs::read_to_string(path)
         .map_err(|e| Error::internal_error().data(format!("Failed to read agent file: {e}")))?;
     let (frontmatter, content) = parse_agent_frontmatter(&raw)?;
-    Ok(agent_source_entry_from_parts(
-        &frontmatter.name,
-        &frontmatter.description,
-        &content,
-        path,
-        global,
-        frontmatter.properties,
-        writable,
-    ))
+    Ok({
+        SourceEntry {
+            source_type: SourceType::Agent,
+            name: frontmatter.name,
+            description: frontmatter.description,
+            content,
+            path: path.to_string_lossy().to_string(),
+            global: global,
+            writable: writable,
+            supporting_files: Vec::new(),
+            properties: frontmatter.properties,
+        }
+    })
 }
 
 fn canonicalize_or_original(path: &Path) -> PathBuf {
@@ -599,7 +572,7 @@ fn create_agent_source(
     fs::create_dir_all(&base).map_err(|e| {
         Error::internal_error().data(format!("Failed to create source directory: {e}"))
     })?;
-    let md = build_agent_md(name, description, content, &properties)?;
+    let md = build_source_markdown(name, description, content, &properties)?;
     fs::write(&file_path, md)
         .map_err(|e| Error::internal_error().data(format!("Failed to write agent file: {e}")))?;
 
@@ -618,7 +591,7 @@ fn update_agent_source(
     let file_path = resolve_agent_file_with_roots(path, additional_roots)?;
     reject_read_only_agent_file(&file_path, additional_roots)?;
     let global = is_global_agent_file(&file_path);
-    let md = build_agent_md(name, description, content, &properties)?;
+    let md = build_source_markdown(name, description, content, &properties)?;
     fs::write(&file_path, md)
         .map_err(|e| Error::internal_error().data(format!("Failed to write agent file: {e}")))?;
 
@@ -686,7 +659,7 @@ pub fn create_source(
                 .get("title")
                 .and_then(|v| v.as_str())
                 .unwrap_or(name);
-            let md = build_project_md(display_name, description, content, &properties)?;
+            let md = build_source_markdown(display_name, description, content, &properties)?;
             fs::write(&file, md).map_err(|e| {
                 Error::internal_error().data(format!("Failed to write project file: {e}"))
             })?;
@@ -819,7 +792,8 @@ pub fn update_source_with_roots(
                 .get("title")
                 .and_then(|v| v.as_str())
                 .unwrap_or(name);
-            let md = build_project_md(display_name, description, content, &resolved_properties)?;
+            let md =
+                build_source_markdown(display_name, description, content, &resolved_properties)?;
             fs::write(&file, md).map_err(|e| {
                 Error::internal_error().data(format!("Failed to write project file: {e}"))
             })?;
