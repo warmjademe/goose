@@ -334,9 +334,7 @@ struct AgentFrontmatter {
 
 fn agent_base_dir(global: bool, project_dir: Option<&str>) -> Result<PathBuf, Error> {
     if global {
-        dirs::home_dir()
-            .map(|home| home.join(".agents").join("agents"))
-            .ok_or_else(|| Error::internal_error().data("Could not determine home directory"))
+        Ok(Paths::agents_dir())
     } else {
         let project_dir = project_dir.ok_or_else(|| {
             Error::invalid_params().data("projectDir is required when global is false")
