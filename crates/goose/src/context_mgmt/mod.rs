@@ -28,7 +28,7 @@ const TOOL_PAIR_SUMMARIZATION_CONTEXT_LIMIT: usize = 65_536;
 fn tool_pair_summarization_enabled() -> bool {
     Config::global()
         .get_param::<bool>("GOOSE_TOOL_PAIR_SUMMARIZATION")
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 const CONVERSATION_CONTINUATION_TEXT: &str =
