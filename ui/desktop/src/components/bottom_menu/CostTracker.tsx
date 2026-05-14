@@ -96,22 +96,7 @@ export function CostTracker({
   }
 
   const calculateCost = (): number => {
-    // Prefer the backend-persisted accumulated cost (survives reload and model switches)
-    if (accumulatedCost != null) {
-      return accumulatedCost;
-    }
-
-    // Fallback: client-side calculation for current model only
-    if (
-      !costInfo ||
-      (costInfo.input_token_cost === undefined && costInfo.output_token_cost === undefined)
-    ) {
-      return 0;
-    }
-
-    const inputCost = (inputTokens * (costInfo.input_token_cost || 0)) / 1_000_000;
-    const outputCost = (outputTokens * (costInfo.output_token_cost || 0)) / 1_000_000;
-    return inputCost + outputCost;
+    return accumulatedCost ?? 0;
   };
 
   const formatCost = (cost: number): string => {
@@ -136,7 +121,6 @@ export function CostTracker({
     );
   }
 
-  // If no cost info found and no backend cost, try to return a default
   if (
     accumulatedCost == null &&
     (!costInfo ||
