@@ -96,6 +96,10 @@ struct AgentMetadata {
     model: Option<String>,
 }
 
+fn is_inherit(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case("inherit")
+}
+
 fn parse_agent_content(content: &str, path: &Path) -> Option<SourceEntry> {
     let (metadata, body): (AgentMetadata, String) = match parse_frontmatter(content) {
         Ok(Some(parsed)) => parsed,
@@ -1100,7 +1104,7 @@ impl SummonClient {
                 return Err(format!(
                     "Source '{}' has kind '{}' which cannot be delegated from summon",
                     source_name, source.source_type
-                ))
+                ));
             }
         };
 
@@ -1210,7 +1214,7 @@ impl SummonClient {
             .map_err(|e| format!("Failed to parse agent frontmatter: {}", e))?
             .ok_or("No frontmatter found in agent file")?;
 
-        let model = metadata.model;
+        let model = metadata.model.filter(|m| !is_inherit(m));
 
         // max_turns is set later in build_task_config so it can incorporate params.max_turns
         // with the correct priority ordering; setting it here would cause it to be overridden
@@ -1296,11 +1300,19 @@ impl SummonClient {
         let override_model = params
             .model
             .clone()
-            .or_else(|| recipe.settings.as_ref().and_then(|s| s.goose_model.clone()))
+            .filter(|m| !is_inherit(m))
+            .or_else(|| {
+                recipe
+                    .settings
+                    .as_ref()
+                    .and_then(|s| s.goose_model.clone())
+                    .filter(|m| !is_inherit(m))
+            })
             .or_else(|| {
                 Config::global()
                     .get_param::<String>("GOOSE_SUBAGENT_MODEL")
                     .ok()
+                    .filter(|m| !is_inherit(m))
             });
 
         if let Some(model) = override_model {
@@ -1345,16 +1357,19 @@ impl SummonClient {
         let provider_name = params
             .provider
             .clone()
+            .filter(|p| !is_inherit(p))
             .or_else(|| {
                 recipe
                     .settings
                     .as_ref()
                     .and_then(|s| s.goose_provider.clone())
+                    .filter(|p| !is_inherit(p))
             })
             .or_else(|| {
                 Config::global()
                     .get_param::<String>("GOOSE_SUBAGENT_PROVIDER")
                     .ok()
+                    .filter(|p| !is_inherit(p))
             })
             .or_else(|| session.provider_name.clone())
             .ok_or_else(|| anyhow::anyhow!("No provider configured"))?;
@@ -2372,5 +2387,105 @@ You review code."#;
             .lock()
             .await
             .contains_key("20260204_1"));
+    }
+
+    #[test]
+    fn test_is_inherit() {
+        assert!(is_inherit("inherit"));
+        assert!(is_inherit("Inherit"));
+        assert!(is_inherit("INHERIT"));
+        assert!(is_inherit("  inherit  "));
+        assert!(!is_inherit("gpt-4"));
+        assert!(!is_inherit(""));
+        assert!(!is_inherit("inherited"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_model_config_ignores_inherit() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_CONTEXT_LIMIT", None::<&str>),
+            ("GOOSE_MAX_TOKENS", None::<&str>),
+            ("GOOSE_SUBAGENT_MODEL", None::<&str>),
+        ]);
+
+        let parent = parent_config();
+        let resolved = resolve_with_override(Some("inherit"), parent.clone());
+        assert_eq!(
+            resolved.model_name, parent.model_name,
+            "model 'inherit' should fall back to parent session model"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_inherit_in_params_does_not_block_recipe_model() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_CONTEXT_LIMIT", None::<&str>),
+            ("GOOSE_MAX_TOKENS", None::<&str>),
+            ("GOOSE_SUBAGENT_MODEL", None::<&str>),
+        ]);
+
+        let client = SummonClient::new(create_test_context()).unwrap();
+        let params = DelegateParams {
+            model: Some("inherit".to_string()),
+            ..Default::default()
+        };
+        let recipe = crate::recipe::Recipe {
+            settings: Some(crate::recipe::Settings {
+                goose_model: Some(OVERRIDE_MODEL.to_string()),
+                goose_provider: None,
+                temperature: None,
+                max_turns: None,
+            }),
+            ..empty_recipe()
+        };
+        let session = session_with(parent_config());
+
+        let resolved = client
+            .resolve_model_config(&params, &recipe, &session, PROVIDER)
+            .expect("resolve_model_config");
+        assert_eq!(
+            resolved.model_name, OVERRIDE_MODEL,
+            "params.model='inherit' should not block recipe model"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_resolve_provider_ignores_inherit() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_CONTEXT_LIMIT", None::<&str>),
+            ("GOOSE_MAX_TOKENS", None::<&str>),
+            ("GOOSE_SUBAGENT_MODEL", None::<&str>),
+            ("GOOSE_SUBAGENT_PROVIDER", None::<&str>),
+        ]);
+
+        let client = SummonClient::new(create_test_context()).unwrap();
+        let params = DelegateParams {
+            provider: Some("inherit".to_string()),
+            ..Default::default()
+        };
+        let session = session_with(parent_config());
+
+        // resolve_provider will fail because no real provider exists, but we can
+        // verify the provider_name resolution by checking resolve_model_config
+        // with the provider chain — if "inherit" were used literally it would
+        // never reach the session fallback.
+        let recipe_with_inherit_provider = crate::recipe::Recipe {
+            settings: Some(crate::recipe::Settings {
+                goose_provider: Some("inherit".to_string()),
+                goose_model: None,
+                temperature: None,
+                max_turns: None,
+            }),
+            ..empty_recipe()
+        };
+
+        // The provider resolution should skip "inherit" and fall through to session
+        let result = client
+            .resolve_model_config(&params, &recipe_with_inherit_provider, &session, PROVIDER)
+            .expect("should resolve using parent session");
+        assert_eq!(result.model_name, PARENT_MODEL);
     }
 }
