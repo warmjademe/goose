@@ -18,7 +18,7 @@ use super::formats::openai_responses::create_responses_request;
 use super::oauth;
 use super::openai_compatible::{
     handle_response_openai_compat, handle_status, map_http_error_to_provider_error,
-    stream_openai_compat,
+    stream_openai_compat, stream_responses_compat,
 };
 use super::retry::ProviderRetry;
 use super::utils::{ImageFormat, RequestLog};
@@ -382,8 +382,8 @@ impl Provider for DatabricksProvider {
         let client_request_id = self.build_client_request_id(session_id);
 
         if Self::is_responses_model(&model_config.model_name) {
-            let mut payload = create_responses_request(model_config, system, messages, tools)?;
-            adapt_responses_payload_for_databricks(&mut payload);
+            let (mut payload, protocol) =
+                create_responses_payload_for_databricks(model_config, system, messages, tools)?;
             payload["stream"] = Value::Bool(true);
             if let Some(ref client_request_id) = client_request_id {
                 payload["client_request_id"] = Value::String(client_request_id.clone());
@@ -405,7 +405,10 @@ impl Provider for DatabricksProvider {
                     let _ = log.error(e);
                 })?;
 
-            stream_openai_compat(response, log)
+            match protocol {
+                DatabricksResponsesProtocol::ChatCompletions => stream_openai_compat(response, log),
+                DatabricksResponsesProtocol::ResponsesApi => stream_responses_compat(response, log),
+            }
         } else {
             let mut payload =
                 create_request(model_config, system, messages, tools, &self.image_format)?;
@@ -586,9 +589,43 @@ impl EmbeddingCapable for DatabricksProvider {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum DatabricksResponsesProtocol {
+    ChatCompletions,
+    ResponsesApi,
+}
+
+fn responses_protocol_for_databricks(
+    model_name: &str,
+    tools: &[Tool],
+) -> DatabricksResponsesProtocol {
+    let (_model_name, reasoning_effort) = super::utils::extract_reasoning_effort(model_name);
+    if !tools.is_empty() && reasoning_effort.is_some() {
+        DatabricksResponsesProtocol::ResponsesApi
+    } else {
+        DatabricksResponsesProtocol::ChatCompletions
+    }
+}
+
+fn create_responses_payload_for_databricks(
+    model_config: &ModelConfig,
+    system: &str,
+    messages: &[Message],
+    tools: &[Tool],
+) -> Result<(Value, DatabricksResponsesProtocol)> {
+    let protocol = responses_protocol_for_databricks(&model_config.model_name, tools);
+    let mut payload = create_responses_request(model_config, system, messages, tools)?;
+
+    if protocol == DatabricksResponsesProtocol::ChatCompletions {
+        adapt_responses_payload_for_databricks(&mut payload);
+    }
+
+    Ok((payload, protocol))
+}
+
 /// Adapt a payload produced by `create_responses_request` (OpenAI Responses API format)
-/// into the Chat Completions format that Databricks' `serving-endpoints/responses`
-/// endpoint actually expects.
+/// into the Chat Completions format accepted by Databricks' `serving-endpoints/responses`
+/// route for Responses-family models without the `tools + reasoning_effort` combination.
 fn adapt_responses_payload_for_databricks(payload: &mut Value) {
     let obj = match payload.as_object_mut() {
         Some(o) => o,
@@ -733,6 +770,7 @@ fn convert_responses_input_to_messages(items: &[Value]) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmcp::object;
 
     fn test_provider() -> DatabricksProvider {
         DatabricksProvider {
@@ -875,5 +913,80 @@ mod tests {
         assert_eq!(tools[0]["function"]["description"], "A tool");
         assert!(tools[0].get("name").is_none());
         assert!(tools[0].get("strict").is_none());
+    }
+
+    #[test]
+    fn responses_protocol_uses_native_responses_for_tools_with_reasoning_effort() {
+        let tool = Tool::new(
+            "my_tool",
+            "A tool",
+            object!({
+                "type": "object",
+                "properties": {}
+            }),
+        );
+
+        assert_eq!(
+            responses_protocol_for_databricks(
+                "databricks-gpt-5.5-high",
+                std::slice::from_ref(&tool)
+            ),
+            DatabricksResponsesProtocol::ResponsesApi
+        );
+        assert_eq!(
+            responses_protocol_for_databricks("databricks-gpt-5.5", std::slice::from_ref(&tool)),
+            DatabricksResponsesProtocol::ChatCompletions
+        );
+        assert_eq!(
+            responses_protocol_for_databricks("databricks-gpt-5.5-high", &[]),
+            DatabricksResponsesProtocol::ChatCompletions
+        );
+    }
+
+    #[test]
+    fn responses_payload_keeps_native_format_for_tools_with_reasoning_effort() {
+        let model_config = ModelConfig {
+            model_name: "databricks-gpt-5.5-high".to_string(),
+            context_limit: None,
+            temperature: None,
+            max_tokens: Some(4096),
+            toolshim: false,
+            toolshim_model: None,
+            fast_model_config: None,
+            request_params: None,
+            reasoning: None,
+        };
+        let tool = Tool::new(
+            "my_tool",
+            "A tool",
+            object!({
+                "type": "object",
+                "properties": {}
+            }),
+        );
+
+        let (payload, protocol) = create_responses_payload_for_databricks(
+            &model_config,
+            "You are helpful.",
+            &[],
+            &[tool],
+        )
+        .unwrap();
+
+        assert_eq!(protocol, DatabricksResponsesProtocol::ResponsesApi);
+        assert_eq!(payload["model"], "databricks-gpt-5.5");
+        assert!(payload.get("input").is_some());
+        assert!(payload.get("messages").is_none());
+        assert_eq!(payload["reasoning"]["effort"], "high");
+        assert_eq!(payload["reasoning"]["summary"], "auto");
+        assert!(payload.get("reasoning_effort").is_none());
+        assert_eq!(payload["max_output_tokens"], 4096);
+        assert!(payload.get("max_completion_tokens").is_none());
+
+        let tools = payload["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["name"], "my_tool");
+        assert_eq!(tools[0]["strict"], false);
+        assert!(tools[0].get("function").is_none());
     }
 }
