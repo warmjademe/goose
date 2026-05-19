@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+//! In-process uniffi bindings for the Goose agent.
+
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -13,7 +14,7 @@ use goose::providers;
 use goose::session::session_manager::SessionType;
 use tokio::runtime::Runtime;
 
-uniffi::setup_scaffolding!();
+pub use goose_sdk_types::{AgentEvent, ExtensionSpec, ProviderSpec};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
@@ -36,93 +37,45 @@ macro_rules! err_from {
 }
 err_from!(anyhow::Error, goose::model::ConfigError, std::io::Error);
 
-#[derive(uniffi::Record, Clone)]
-pub struct ProviderSpec {
-    pub name: Option<String>,
-    pub model: Option<String>,
-}
-
-#[derive(uniffi::Enum, Clone)]
-pub enum ExtensionSpec {
-    Builtin {
-        name: String,
-    },
-    Stdio {
-        name: String,
-        cmd: String,
-        args: Vec<String>,
-        envs: HashMap<String, String>,
-    },
-    StreamableHttp {
-        name: String,
-        uri: String,
-        headers: HashMap<String, String>,
-    },
-}
-
-impl ExtensionSpec {
-    fn into_config(self) -> ExtensionConfig {
-        match self {
-            ExtensionSpec::Builtin { name } => ExtensionConfig::Builtin {
-                name,
-                description: String::new(),
-                display_name: None,
-                timeout: Some(DEFAULT_EXTENSION_TIMEOUT),
-                bundled: Some(true),
-                available_tools: vec![],
-            },
-            ExtensionSpec::Stdio {
-                name,
-                cmd,
-                args,
-                envs,
-            } => ExtensionConfig::Stdio {
-                name,
-                description: String::new(),
-                cmd,
-                args,
-                envs: Envs::new(envs),
-                env_keys: vec![],
-                timeout: Some(DEFAULT_EXTENSION_TIMEOUT),
-                bundled: None,
-                available_tools: vec![],
-            },
-            ExtensionSpec::StreamableHttp { name, uri, headers } => {
-                ExtensionConfig::StreamableHttp {
-                    name,
-                    description: String::new(),
-                    uri,
-                    envs: Envs::new(HashMap::new()),
-                    env_keys: vec![],
-                    headers,
-                    timeout: Some(DEFAULT_EXTENSION_TIMEOUT),
-                    socket: None,
-                    bundled: None,
-                    available_tools: vec![],
-                }
-            }
-        }
+fn extension_spec_into_config(spec: ExtensionSpec) -> ExtensionConfig {
+    match spec {
+        ExtensionSpec::Builtin { name } => ExtensionConfig::Builtin {
+            name,
+            description: String::new(),
+            display_name: None,
+            timeout: Some(DEFAULT_EXTENSION_TIMEOUT),
+            bundled: Some(true),
+            available_tools: vec![],
+        },
+        ExtensionSpec::Stdio {
+            name,
+            cmd,
+            args,
+            envs,
+        } => ExtensionConfig::Stdio {
+            name,
+            description: String::new(),
+            cmd,
+            args,
+            envs: Envs::new(envs),
+            env_keys: vec![],
+            timeout: Some(DEFAULT_EXTENSION_TIMEOUT),
+            bundled: None,
+            available_tools: vec![],
+        },
+        ExtensionSpec::StreamableHttp { name, uri, headers } => ExtensionConfig::StreamableHttp {
+            name,
+            description: String::new(),
+            uri,
+            envs: Envs::new(std::collections::HashMap::new()),
+            env_keys: vec![],
+            headers,
+            timeout: Some(DEFAULT_EXTENSION_TIMEOUT),
+            socket: None,
+            bundled: None,
+            available_tools: vec![],
+        },
     }
-}
-
-#[derive(uniffi::Enum, Clone, Debug)]
-pub enum AgentEvent {
-    AssistantText {
-        text: String,
-    },
-    Thinking {
-        text: String,
-    },
-    ToolRequest {
-        id: String,
-        name: String,
-        arguments: String,
-    },
-    ToolResponse {
-        id: String,
-        output: String,
-        is_error: bool,
-    },
 }
 
 #[uniffi::export(callback_interface)]
@@ -186,12 +139,13 @@ impl Agent {
                 )
                 .await?;
 
-            let ext_configs: Vec<ExtensionConfig> =
-                extensions.into_iter().map(|e| e.into_config()).collect();
+            let ext_configs: Vec<ExtensionConfig> = extensions
+                .into_iter()
+                .map(extension_spec_into_config)
+                .collect();
 
             let model_config = ModelConfig::new(&model_name)?.with_canonical_limits(&provider_name);
-            let prov =
-                providers::create(&provider_name, model_config, ext_configs.clone()).await?;
+            let prov = providers::create(&provider_name, model_config, ext_configs.clone()).await?;
             self.inner.update_provider(prov, &session.id).await?;
 
             if !ext_configs.is_empty() {
@@ -212,42 +166,6 @@ impl Agent {
 
             *self.session_id.lock().await = Some(session.id.clone());
             Ok(session.id)
-        })
-    }
-
-    pub fn reply_collect(&self, prompt: String) -> Result<Vec<AgentEvent>, GooseError> {
-        rt().block_on(async {
-            let session_id = self
-                .session_id
-                .lock()
-                .await
-                .clone()
-                .ok_or_else(|| GooseError::Generic("call configure() first".into()))?;
-            let session_config = CoreSessionConfig {
-                id: session_id,
-                schedule_id: None,
-                max_turns: None,
-                retry_config: None,
-            };
-            let mut stream = self
-                .inner
-                .reply(Message::user().with_text(&prompt), session_config, None)
-                .await?;
-            let mut out = Vec::new();
-            while let Some(item) = stream.next().await {
-                match item {
-                    Ok(CoreAgentEvent::Message(msg)) => {
-                        for content in &msg.content {
-                            if let Some(ev) = content_to_event(content) {
-                                out.push(ev);
-                            }
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => return Err(e.into()),
-                }
-            }
-            Ok(out)
         })
     }
 

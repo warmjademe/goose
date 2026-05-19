@@ -1,12 +1,10 @@
 package examples
 
-import uniffi.goose_uniffi.Agent
-import uniffi.goose_uniffi.AgentEvent
-import uniffi.goose_uniffi.EventSink
-import uniffi.goose_uniffi.ExtensionSpec
-import uniffi.goose_uniffi.ProviderSpec
-
-/** Minimal goose SDK demo: ask the agent to ping apple.com. */
+import uniffi.goose_sdk.Agent
+import uniffi.goose_sdk.EventSink
+import uniffi.goose_sdk_types.AgentEvent
+import uniffi.goose_sdk_types.ExtensionSpec
+import uniffi.goose_sdk_types.ProviderSpec
 
 private object Style {
     const val DIM = "\u001B[2m"
@@ -78,6 +76,6 @@ fun main() {
         )
     }
 
-    System.err.println("> ping apple.com".paint(Style.DIM) + "\n")
-    agent.reply("ping apple.com", Printer())
+    System.err.println("> ping aaif.io".paint(Style.DIM) + "\n")
+    agent.reply("ping aaif.io", Printer())
 }
