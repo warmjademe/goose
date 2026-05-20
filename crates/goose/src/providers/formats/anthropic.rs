@@ -583,15 +583,24 @@ fn apply_thinking_config(
 
     if options.preserve_thinking_context {
         if !obj.contains_key("thinking") {
-            let budget_tokens = thinking_budget_tokens(model_config);
-            obj.insert("max_tokens".to_string(), json!(max_tokens + budget_tokens));
-            obj.insert(
-                "thinking".to_string(),
-                json!({
-                    "type": "enabled",
-                    "budget_tokens": budget_tokens
-                }),
-            );
+            if supports_adaptive_thinking(&model_config.model_name) {
+                obj.insert(
+                    "thinking".to_string(),
+                    json!({"type": "adaptive", "display": "summarized"}),
+                );
+                let effort = adaptive_effort_value(model_config);
+                obj.insert("output_config".to_string(), json!({"effort": effort}));
+            } else {
+                let budget_tokens = thinking_budget_tokens(model_config);
+                obj.insert("max_tokens".to_string(), json!(max_tokens + budget_tokens));
+                obj.insert(
+                    "thinking".to_string(),
+                    json!({
+                        "type": "enabled",
+                        "budget_tokens": budget_tokens
+                    }),
+                );
+            }
         }
 
         if let Some(thinking) = obj.get_mut("thinking").and_then(|t| t.as_object_mut()) {
@@ -1356,6 +1365,47 @@ mod tests {
         assert_eq!(payload["thinking"]["clear_thinking"], false);
         assert_eq!(payload["messages"][0]["content"][0]["type"], "thinking");
         assert_eq!(payload["messages"][0]["content"][0]["thinking"], "internal");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_preserves_thinking_context_with_opus_47_adaptive() -> Result<()> {
+        let _guard = env_lock::lock_env([
+            ("GOOSE_THINKING_EFFORT", None::<&str>),
+            ("CLAUDE_THINKING_TYPE", None::<&str>),
+            ("CLAUDE_THINKING_ENABLED", None::<&str>),
+            ("ANTHROPIC_THINKING_BUDGET", None::<&str>),
+            ("CLAUDE_THINKING_BUDGET", None::<&str>),
+            ("ANTHROPIC_PRESERVE_THINKING_CONTEXT", None::<&str>),
+            ("ANTHROPIC_PRESERVE_UNSIGNED_THINKING", None::<&str>),
+        ]);
+
+        let mut config = cfg_with_effort("claude-opus-4-7", "max");
+        config.max_tokens = Some(4096);
+        let messages = vec![
+            Message::assistant().with_content(MessageContent::thinking("internal", "")),
+            Message::user().with_text("Continue"),
+        ];
+
+        let payload = create_request_with_options(
+            &config,
+            "system",
+            &messages,
+            &[],
+            AnthropicFormatOptions {
+                preserve_unsigned_thinking: true,
+                preserve_thinking_context: true,
+            },
+        )?;
+
+        assert_eq!(payload["thinking"]["type"], "adaptive");
+        assert_eq!(payload["thinking"]["display"], "summarized");
+        assert_eq!(payload["thinking"]["clear_thinking"], false);
+        assert_eq!(payload["output_config"]["effort"], "xhigh");
+        assert!(payload["thinking"].get("budget_tokens").is_none());
+        assert_eq!(payload["max_tokens"], 4096);
+        assert_eq!(payload["messages"][0]["content"][0]["type"], "thinking");
 
         Ok(())
     }
