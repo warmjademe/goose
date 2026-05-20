@@ -28,6 +28,89 @@ use tokio_util::sync::CancellationToken;
 
 pub static EXTENSION_NAME: &str = "code_execution";
 
+/// Environment variable for capping individual string fields inside the
+/// bundled result of `execute_typescript` / `execute_bash`. Value is in
+/// bytes per field. Set to `0` to disable. Defaults to
+/// [`DEFAULT_CODE_EXEC_FIELD_MAX_BYTES`].
+pub const CODE_EXEC_FIELD_MAX_BYTES_ENV: &str = "GOOSE_CODE_EXEC_FIELD_MAX_BYTES";
+
+/// Default per-string-field cap inside a code-execution result bundle. Picked
+/// smaller than [`crate::conversation::message::DEFAULT_TOOL_RESULT_MAX_BYTES`]
+/// because bundles can hold many fields — one fat field shouldn't crowd out
+/// the small useful ones in the same `{ ... }` object.
+pub const DEFAULT_CODE_EXEC_FIELD_MAX_BYTES: usize = 8_192;
+
+fn code_exec_field_cap() -> Option<usize> {
+    match std::env::var(CODE_EXEC_FIELD_MAX_BYTES_ENV) {
+        Ok(v) => v
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| if n == 0 { None } else { Some(n) }),
+        Err(_) => Some(DEFAULT_CODE_EXEC_FIELD_MAX_BYTES),
+    }
+}
+
+/// Walk a JSON value and replace any leaf string longer than `cap` bytes with
+/// a marker telling the model how many bytes were elided. UTF-8 safe.
+fn truncate_json_strings(value: &mut serde_json::Value, cap: usize) {
+    match value {
+        serde_json::Value::String(s) => {
+            if s.len() > cap {
+                let mut end = cap;
+                while end > 0 && !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                let elided = s.len() - end;
+                let truncated = s.get(..end).unwrap_or("");
+                let marker = format!(
+                    "{truncated}\n[goose: truncated {elided} bytes from this field (per-field cap={cap} bytes, set {env}=0 to disable). Re-run with a narrower selection (e.g. line/limit, head, grep) or return only the slice you need.]",
+                    env = CODE_EXEC_FIELD_MAX_BYTES_ENV,
+                );
+                *s = marker;
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                truncate_json_strings(item, cap);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (_, v) in map.iter_mut() {
+                truncate_json_strings(v, cap);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Apply per-field truncation to an `ExecuteOutput` in place, capping
+/// `stdout`, `stderr`, and any string leaves inside `output`.
+fn truncate_execute_output(out: &mut pctx_code_mode::model::ExecuteOutput) {
+    let cap = match code_exec_field_cap() {
+        Some(c) => c,
+        None => return,
+    };
+    if out.stdout.len() > cap {
+        let mut s = std::mem::take(&mut out.stdout);
+        let mut tmp = serde_json::Value::String(std::mem::take(&mut s));
+        truncate_json_strings(&mut tmp, cap);
+        if let serde_json::Value::String(new_s) = tmp {
+            out.stdout = new_s;
+        }
+    }
+    if out.stderr.len() > cap {
+        let mut tmp = serde_json::Value::String(std::mem::take(&mut out.stderr));
+        truncate_json_strings(&mut tmp, cap);
+        if let serde_json::Value::String(new_s) = tmp {
+            out.stderr = new_s;
+        }
+    }
+    if let Some(v) = out.output.as_mut() {
+        truncate_json_strings(v, cap);
+    }
+}
+
 /// Append goose-specific context-hygiene advice to the upstream
 /// `pctx_code_mode` tool descriptions. The upstream descriptions push the
 /// model toward bundling many sub-tool calls into one execute and returning a
@@ -249,6 +332,8 @@ impl CodeExecutionClient {
         .await
         .map_err(|e| format!("Typescript execution task failed: {e}"))??;
 
+        let mut output = output;
+        truncate_execute_output(&mut output);
         Ok(vec![Content::text(output.markdown())])
     }
 
@@ -287,6 +372,8 @@ impl CodeExecutionClient {
         .await
         .map_err(|e| format!("Typescript execution task failed: {e}"))??;
 
+        let mut output = output;
+        truncate_execute_output(&mut output);
         Ok(vec![Content::text(output.markdown())])
     }
 }
@@ -577,6 +664,8 @@ impl CodeModeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pctx_code_mode::model::ExecuteOutput;
+    use serial_test::serial;
 
     #[test]
     fn context_hygiene_advice_is_appended_to_upstream_desc() {
@@ -586,5 +675,74 @@ mod tests {
         assert!(combined.contains("CONTEXT HYGIENE (goose):"));
         assert!(combined.contains("individually small"));
         assert!(combined.contains("Return only the fields you actually need"));
+    }
+
+    #[test]
+    #[serial]
+    fn truncate_json_strings_caps_long_leaves_only() {
+        std::env::remove_var(CODE_EXEC_FIELD_MAX_BYTES_ENV);
+        let mut v = serde_json::json!({
+            "small": "hello",
+            "big": "x".repeat(20_000),
+            "nested": {
+                "deep_big": "y".repeat(10_000),
+                "deep_small": "ok",
+            },
+            "arr": ["a", "z".repeat(20_000)],
+            "n": 5,
+        });
+        truncate_json_strings(&mut v, 1024);
+        assert_eq!(v["small"], "hello");
+        assert!(v["big"].as_str().unwrap().contains("[goose: truncated"));
+        assert!(v["big"].as_str().unwrap().len() < 2_000);
+        assert!(v["nested"]["deep_big"]
+            .as_str()
+            .unwrap()
+            .contains("[goose: truncated"));
+        assert_eq!(v["nested"]["deep_small"], "ok");
+        assert_eq!(v["arr"][0], "a");
+        assert!(v["arr"][1].as_str().unwrap().contains("[goose: truncated"));
+        assert_eq!(v["n"], 5);
+    }
+
+    #[test]
+    #[serial]
+    fn truncate_execute_output_caps_stdout_stderr_and_output_fields() {
+        std::env::set_var(CODE_EXEC_FIELD_MAX_BYTES_ENV, "2048");
+        let mut out = ExecuteOutput {
+            success: true,
+            stdout: "o".repeat(10_000),
+            stderr: "e".repeat(10_000),
+            output: Some(serde_json::json!({
+                "foo": "f".repeat(10_000),
+                "bar": "small",
+            })),
+        };
+        truncate_execute_output(&mut out);
+        assert!(out.stdout.len() < 5_000);
+        assert!(out.stdout.contains("[goose: truncated"));
+        assert!(out.stderr.len() < 5_000);
+        assert!(out.stderr.contains("[goose: truncated"));
+        let obj = out.output.as_ref().unwrap().as_object().unwrap();
+        assert!(obj["foo"].as_str().unwrap().contains("[goose: truncated"));
+        assert_eq!(obj["bar"], "small");
+        std::env::remove_var(CODE_EXEC_FIELD_MAX_BYTES_ENV);
+    }
+
+    #[test]
+    #[serial]
+    fn truncate_execute_output_disabled_via_env_zero() {
+        std::env::set_var(CODE_EXEC_FIELD_MAX_BYTES_ENV, "0");
+        let big = "x".repeat(50_000);
+        let mut out = ExecuteOutput {
+            success: true,
+            stdout: big.clone(),
+            stderr: String::new(),
+            output: Some(serde_json::json!({ "foo": big.clone() })),
+        };
+        truncate_execute_output(&mut out);
+        assert_eq!(out.stdout, big);
+        assert_eq!(out.output.unwrap()["foo"], big);
+        std::env::remove_var(CODE_EXEC_FIELD_MAX_BYTES_ENV);
     }
 }
