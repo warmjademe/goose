@@ -131,16 +131,13 @@ fn maybe_dedup_response(
             let key: [u8; 32] = hasher.finalize().into();
 
             if let Some(record) = seen.get(&key) {
-                // Already seen this exact (tool, args, body) — replace with marker.
                 let marker = format!(
                     "[goose: identical to tool result at turn {turn0} \
-(sha={sha8}, {bytes} bytes elided, tool={tool_name}). \
-Set {env}=0 to disable dedup.]",
+(sha={sha8}, {bytes} bytes elided, tool={tool_name})]",
                     turn0 = record.turn,
                     sha8 = record.body_sha8,
                     bytes = record.body_bytes,
                     tool_name = tool_name,
-                    env = TOOL_RESULT_DEDUP_ENV,
                 );
                 text_content.text = marker;
             } else {
