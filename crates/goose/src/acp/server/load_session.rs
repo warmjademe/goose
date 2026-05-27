@@ -432,8 +432,6 @@ impl GooseAcpAgent {
                     .data(format!("Session not found: {}", session_id_str))
             })?;
 
-        let replay_tool_requests = replay_conversation_to_client(cx, &session)?;
-
         if args.cwd != session.working_dir {
             self.session_manager
                 .update(&session_id_str)
@@ -459,6 +457,8 @@ impl GooseAcpAgent {
                 prebuilt_provider,
             )
             .await?;
+
+        let replay_tool_requests = replay_conversation_to_client(cx, &session)?;
 
         let acp_session = GooseAcpSession {
             agent: AgentHandle::Ready(agent.clone()),
