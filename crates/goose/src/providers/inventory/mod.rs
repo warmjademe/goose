@@ -309,6 +309,23 @@ impl ProviderInventoryService {
         }))
     }
 
+    pub async fn find_entry_for_provider(
+        &self,
+        provider_id: &str,
+    ) -> Option<ProviderInventoryEntry> {
+        match self.entry_for_provider(provider_id).await {
+            Ok(entry) => entry,
+            Err(error) => {
+                warn!(
+                    provider = %provider_id,
+                    %error,
+                    "failed to look up provider inventory entry"
+                );
+                None
+            }
+        }
+    }
+
     pub async fn entries(&self, provider_ids: &[String]) -> Result<Vec<ProviderInventoryEntry>> {
         let ids = self.resolve_provider_ids(provider_ids).await;
         let handles: Vec<_> = ids

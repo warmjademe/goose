@@ -3,6 +3,7 @@ mod common;
 pub(crate) mod fs;
 mod mcp_app_proxy;
 mod provider;
+mod response_builder;
 pub mod server;
 pub mod server_factory;
 pub(crate) mod tools;

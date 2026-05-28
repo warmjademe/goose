@@ -1,6 +1,10 @@
 use crate::acp::custom_notifications::*;
 use crate::acp::custom_requests::*;
 use crate::acp::fs::AcpTools;
+pub(super) use crate::acp::response_builder::{
+    build_config_options, build_eager_config_from_inventory, build_mode_state, build_model_state,
+    build_provider_options, session_provider_selection, should_refresh_inventory_for_session_init,
+};
 use crate::acp::tools::AcpAwareToolMeta;
 use crate::acp::{PermissionDecision, ACP_CURRENT_MODEL};
 use crate::action_required_manager::ActionRequiredManager;
@@ -38,12 +42,12 @@ use agent_client_protocol::schema::{
     ConfigOptionUpdate, Content, ContentBlock, ContentChunk, CurrentModeUpdate, EmbeddedResource,
     EmbeddedResourceResource, FileSystemCapabilities, ForkSessionRequest, ForkSessionResponse,
     ImageContent, InitializeRequest, InitializeResponse, ListSessionsRequest, ListSessionsResponse,
-    LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta, ModelId, ModelInfo,
+    LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta,
     NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind,
     PromptCapabilities, PromptRequest, PromptResponse, RequestPermissionOutcome,
     RequestPermissionRequest, ResourceLink, SessionCapabilities, SessionCloseCapabilities,
-    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
-    SessionInfo, SessionInfoUpdate, SessionListCapabilities, SessionMode, SessionModeId,
+    SessionConfigOption, SessionId,
+    SessionInfo, SessionInfoUpdate, SessionListCapabilities,
     SessionModeState, SessionModelState, SessionNotification, SessionUpdate,
     SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
     SetSessionModeResponse, SetSessionModelRequest, SetSessionModelResponse, StopReason,
@@ -71,7 +75,6 @@ use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use strum::{EnumMessage, VariantNames};
 use tokio::sync::{Mutex, OnceCell};
 use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 use tokio_util::sync::CancellationToken;
@@ -140,8 +143,8 @@ impl<T, E: std::fmt::Display> ResultExt<T> for Result<T, E> {
     }
 }
 
-const DEFAULT_PROVIDER_ID: &str = "goose";
-const DEFAULT_PROVIDER_LABEL: &str = "Goose (Default)";
+pub(super) const DEFAULT_PROVIDER_ID: &str = "goose";
+pub(super) const DEFAULT_PROVIDER_LABEL: &str = "Goose (Default)";
 const PROVIDER_CONFIG_STATUS_CHECK_CONCURRENCY: usize = 16;
 
 async fn ensure_refresh_identity_current(
@@ -932,79 +935,6 @@ fn builtin_to_extension_config(name: &str) -> ExtensionConfig {
     }
 }
 
-fn build_model_state(current_model: &str, inventory: &ProviderInventoryEntry) -> SessionModelState {
-    let mut available_models = inventory
-        .models
-        .iter()
-        .map(|model| ModelInfo::new(ModelId::new(model.id.as_str()), model.name.as_str()))
-        .collect::<Vec<_>>();
-    if !available_models
-        .iter()
-        .any(|model| model.model_id.0.as_ref() == current_model)
-    {
-        available_models.insert(
-            0,
-            ModelInfo::new(ModelId::new(current_model), current_model),
-        );
-    }
-    SessionModelState::new(ModelId::new(current_model), available_models)
-}
-
-struct ProviderOptionEntry {
-    id: String,
-    label: String,
-}
-
-async fn list_provider_entries(current_provider: Option<&str>) -> Vec<ProviderOptionEntry> {
-    let mut providers = crate::providers::providers()
-        .await
-        .into_iter()
-        .map(|(metadata, _)| ProviderOptionEntry {
-            id: metadata.name,
-            label: metadata.display_name,
-        })
-        .collect::<Vec<_>>();
-    providers.sort_by(|left, right| left.id.cmp(&right.id));
-    providers.dedup_by(|left, right| left.id == right.id);
-
-    if let Some(current_provider) = current_provider {
-        if current_provider != DEFAULT_PROVIDER_ID
-            && !providers
-                .iter()
-                .any(|provider| provider.id == current_provider)
-        {
-            providers.push(ProviderOptionEntry {
-                id: current_provider.to_string(),
-                label: current_provider.to_string(),
-            });
-            providers.sort_by(|left, right| left.id.cmp(&right.id));
-        }
-    }
-
-    let mut entries = Vec::with_capacity(providers.len() + 1);
-    entries.push(ProviderOptionEntry {
-        id: DEFAULT_PROVIDER_ID.to_string(),
-        label: DEFAULT_PROVIDER_LABEL.to_string(),
-    });
-    entries.extend(providers);
-    entries
-}
-
-async fn build_provider_options(current_provider: Option<&str>) -> Vec<SessionConfigSelectOption> {
-    list_provider_entries(current_provider)
-        .await
-        .into_iter()
-        .map(|provider| SessionConfigSelectOption::new(provider.id, provider.label))
-        .collect()
-}
-
-fn session_provider_selection(session: &Session) -> &str {
-    session
-        .provider_name
-        .as_deref()
-        .unwrap_or(DEFAULT_PROVIDER_ID)
-}
-
 async fn provider_default_model_config(
     provider_name: &str,
 ) -> Result<crate::model::ModelConfig, String> {
@@ -1109,89 +1039,6 @@ async fn resolve_provider_and_model(
     let config =
         Config::new(config_dir.join(CONFIG_YAML_NAME), "goose").map_err(|e| e.to_string())?;
     resolve_provider_and_model_from_config(&config, goose_session).await
-}
-
-fn build_mode_state(
-    current_mode: GooseMode,
-) -> Result<SessionModeState, agent_client_protocol::Error> {
-    let mut available = Vec::with_capacity(GooseMode::VARIANTS.len());
-    for &name in GooseMode::VARIANTS {
-        let goose_mode: GooseMode = name.parse().map_err(|_| {
-            agent_client_protocol::Error::internal_error() // impossible but satisfy linters
-                .data(format!("Failed to parse GooseMode variant: {}", name))
-        })?;
-        let mut mode = SessionMode::new(SessionModeId::new(name), name);
-        mode.description = goose_mode.get_message().map(Into::into);
-        available.push(mode);
-    }
-    Ok(SessionModeState::new(
-        SessionModeId::new(current_mode.to_string()),
-        available,
-    ))
-}
-
-fn should_refresh_inventory_for_session_init(entry: &ProviderInventoryEntry) -> bool {
-    entry.configured
-        && entry.supports_refresh
-        && (entry.last_updated_at.is_none() || ProviderInventoryService::is_stale(entry))
-}
-
-async fn build_eager_config_from_inventory(
-    provider_name: &str,
-    current_model: &str,
-    inventory: &ProviderInventoryEntry,
-    mode_state: &SessionModeState,
-    goose_session: &Session,
-) -> (SessionModelState, Vec<SessionConfigOption>) {
-    let ms = build_model_state(current_model, inventory);
-    let provider_selection = session_provider_selection(goose_session);
-    let provider_options = build_provider_options(Some(provider_name)).await;
-    let config_options =
-        build_config_options(mode_state, &ms, provider_selection, provider_options);
-    (ms, config_options)
-}
-
-fn build_config_options(
-    mode_state: &SessionModeState,
-    model_state: &SessionModelState,
-    provider_selection: &str,
-    provider_options: Vec<SessionConfigSelectOption>,
-) -> Vec<SessionConfigOption> {
-    let mode_options: Vec<SessionConfigSelectOption> = mode_state
-        .available_modes
-        .iter()
-        .map(|m| {
-            SessionConfigSelectOption::new(m.id.0.clone(), m.name.clone())
-                .description(m.description.clone())
-        })
-        .collect();
-    let model_options: Vec<SessionConfigSelectOption> = model_state
-        .available_models
-        .iter()
-        .map(|m| SessionConfigSelectOption::new(m.model_id.0.clone(), m.name.clone()))
-        .collect();
-    vec![
-        SessionConfigOption::select(
-            "provider",
-            "Provider",
-            provider_selection.to_string(),
-            provider_options,
-        ),
-        SessionConfigOption::select(
-            "mode",
-            "Mode",
-            mode_state.current_mode_id.0.clone(),
-            mode_options,
-        )
-        .category(SessionConfigOptionCategory::Mode),
-        SessionConfigOption::select(
-            "model",
-            "Model",
-            model_state.current_model_id.0.clone(),
-            model_options,
-        )
-        .category(SessionConfigOptionCategory::Model),
-    ]
 }
 
 fn to_nonnegative_u64(value: Option<i32>) -> Option<u64> {
@@ -1360,10 +1207,8 @@ impl GooseAcpAgent {
 
         let Some(mut inventory) = self
             .provider_inventory
-            .entry_for_provider(provider_name)
+            .find_entry_for_provider(provider_name)
             .await
-            .ok()
-            .flatten()
         else {
             return (None, None, None);
         };
@@ -1393,6 +1238,78 @@ impl GooseAcpAgent {
         )
         .await;
         (Some(model_state), Some(config_options), prebuilt_provider)
+    }
+
+    async fn maybe_refresh_provider_inventory(&self, goose_session: &Session) {
+        let Some(provider_name) = goose_session.provider_name.as_deref() else {
+            return;
+        };
+        let Some(mut inventory) = self
+            .provider_inventory
+            .find_entry_for_provider(provider_name)
+            .await
+        else {
+            return;
+        };
+        if !should_refresh_inventory_for_session_init(&inventory) {
+            return;
+        }
+        let agent = match self
+            .agent_manager
+            .get_or_create_agent(goose_session.id.clone())
+            .await
+        {
+            Ok(agent) => agent,
+            Err(error) => {
+                warn!(
+                    provider = %provider_name,
+                    session = %goose_session.id,
+                    error = %error,
+                    "failed to get agent during inventory refresh"
+                );
+                return;
+            }
+        };
+        let provider = match agent.provider().await {
+            Ok(provider) => provider,
+            Err(error) => {
+                warn!(
+                    provider = %provider_name,
+                    session = %goose_session.id,
+                    error = %error,
+                    "agent has no provider available for inventory refresh"
+                );
+                return;
+            }
+        };
+        self.refresh_inventory_with_provider(provider_name, &provider, &mut inventory)
+            .await;
+    }
+
+    async fn build_eager_session_config(
+        &self,
+        mode_state: &SessionModeState,
+        goose_session: &Session,
+    ) -> (Option<SessionModelState>, Option<Vec<SessionConfigOption>>) {
+        let (Some(provider_name), Some(model_config)) = (
+            goose_session.provider_name.as_deref(),
+            goose_session.model_config.as_ref(),
+        ) else {
+            return (None, None);
+        };
+        let Some(inventory) = self
+            .provider_inventory
+            .find_entry_for_provider(provider_name)
+            .await
+        else {
+            return (None, None);
+        };
+        let model_state = build_model_state(model_config.model_name.as_str(), &inventory);
+        let provider_selection = session_provider_selection(goose_session);
+        let provider_options = build_provider_options(Some(provider_name)).await;
+        let config_options =
+            build_config_options(mode_state, &model_state, provider_selection, provider_options);
+        (Some(model_state), Some(config_options))
     }
 
     async fn build_session_provider(
@@ -1533,9 +1450,9 @@ impl GooseAcpAgent {
             ),
         }
 
-        if let Ok(Some(refreshed_inventory)) = self
+        if let Some(refreshed_inventory) = self
             .provider_inventory
-            .entry_for_provider(provider_name)
+            .find_entry_for_provider(provider_name)
             .await
         {
             *inventory = refreshed_inventory;
@@ -1550,8 +1467,10 @@ impl GooseAcpAgent {
         // TODO: Lifei need to remove the call below, because it was called outside. but check load_session, and fork_session too
         let resolved_provider = resolve_provider_and_model(&self.config_dir, goose_session).await;
         let usage_updates = build_usage_updates(goose_session);
-        let (model_state, config_options, prebuilt_provider) = self
-            .prepare_session_init_config(&resolved_provider, &mode_state, goose_session)
+
+        self.maybe_refresh_provider_inventory(goose_session).await;
+        let (model_state, config_options) = self
+            .build_eager_session_config(&mode_state, goose_session)
             .await;
 
         Ok(SessionInitState {
@@ -1559,7 +1478,7 @@ impl GooseAcpAgent {
             resolved_provider,
             model_state,
             config_options,
-            prebuilt_provider,
+            prebuilt_provider: None,
             usage_updates,
         })
     }
