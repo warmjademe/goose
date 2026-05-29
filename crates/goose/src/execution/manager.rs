@@ -1,22 +1,30 @@
+use crate::agents::mcp_client::GooseMcpHostInfo;
 use crate::agents::{Agent, AgentConfig, GoosePlatform};
 use crate::config::paths::Paths;
 use crate::config::permission::PermissionManager;
 use crate::config::Config;
 use crate::scheduler::Scheduler;
 use crate::scheduler_trait::SchedulerTrait;
-use crate::session::SessionManager;
+use crate::session::{SessionManager, SessionNameUpdate};
 use anyhow::Result;
 use lru::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell, RwLock};
+use tokio::sync::{mpsc, Mutex, OnceCell, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
 const DEFAULT_MAX_SESSION: usize = 100;
 
 static AGENT_MANAGER: OnceCell<Arc<AgentManager>> = OnceCell::const_new();
+
+#[derive(Clone, Default)]
+pub struct RuntimeContext {
+    pub mcp_host_info: Option<GooseMcpHostInfo>,
+    pub use_login_shell_path: Option<bool>,
+    pub session_name_update_tx: Option<mpsc::UnboundedSender<SessionNameUpdate>>,
+}
 
 pub struct AgentManager {
     sessions: Arc<RwLock<LruCache<String, Arc<Agent>>>>,
@@ -98,6 +106,15 @@ impl AgentManager {
     }
 
     pub async fn get_or_create_agent(&self, session_id: String) -> Result<Arc<Agent>> {
+        self.get_or_create_agent_with_runtime_context(session_id, RuntimeContext::default())
+            .await
+    }
+
+    pub async fn get_or_create_agent_with_runtime_context(
+        &self,
+        session_id: String,
+        runtime_context: RuntimeContext,
+    ) -> Result<Arc<Agent>> {
         // Fast path: agent already cached.
         {
             let mut sessions = self.sessions.write().await;
@@ -127,7 +144,7 @@ impl AgentManager {
         // bail out via `?`, leaving a permanent `creation_locks` entry
         // for a session that never made it into the LRU cache and that
         // no one will ever call `remove_session` on.
-        let result = self.create_agent_locked(&session_id).await;
+        let result = self.create_agent_locked(&session_id, runtime_context).await;
 
         if result.is_err() {
             // Release BOTH the guard and our local Arc clone of the
@@ -148,7 +165,11 @@ impl AgentManager {
 
     /// Slow-path body for `get_or_create_agent`.  Must be called with the
     /// per-session creation lock held by the caller.
-    async fn create_agent_locked(&self, session_id: &str) -> Result<Arc<Agent>> {
+    async fn create_agent_locked(
+        &self,
+        session_id: &str,
+        runtime_context: RuntimeContext,
+    ) -> Result<Arc<Agent>> {
         // Re-check under the creation lock: another caller may have
         // finished creating the agent while we were waiting.
         {
@@ -171,6 +192,9 @@ impl AgentManager {
 
         let mut config = self.agent_config.clone();
         config.goose_mode = mode;
+        config.mcp_host_info = runtime_context.mcp_host_info;
+        config.use_login_shell_path = runtime_context.use_login_shell_path;
+        config.session_name_update_tx = runtime_context.session_name_update_tx;
         let agent = Arc::new(Agent::with_config(config));
 
         if let Ok(session) = self

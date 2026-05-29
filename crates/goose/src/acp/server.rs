@@ -2,8 +2,8 @@ use crate::acp::custom_notifications::*;
 use crate::acp::custom_requests::*;
 use crate::acp::fs::AcpTools;
 pub(super) use crate::acp::response_builder::{
-    build_config_options, build_eager_config_from_inventory, build_mode_state, build_model_state,
-    build_provider_options, session_provider_selection, should_refresh_inventory_for_session_init,
+    build_config_options, build_mode_state, build_model_state, build_provider_options,
+    session_provider_selection, should_refresh_inventory_for_session_init,
 };
 use crate::acp::tools::AcpAwareToolMeta;
 use crate::acp::{PermissionDecision, ACP_CURRENT_MODEL};
@@ -22,7 +22,7 @@ use crate::conversation::message::{
     ActionRequiredData, Message, MessageContent, SystemNotificationContent, SystemNotificationType,
     ToolRequest,
 };
-use crate::execution::manager::AgentManager;
+use crate::execution::manager::{AgentManager, RuntimeContext};
 use crate::mcp_utils::ToolResult;
 use crate::permission::permission_confirmation::PrincipalType;
 use crate::permission::{Permission, PermissionConfirmation};
@@ -42,18 +42,16 @@ use agent_client_protocol::schema::{
     ConfigOptionUpdate, Content, ContentBlock, ContentChunk, CurrentModeUpdate, EmbeddedResource,
     EmbeddedResourceResource, FileSystemCapabilities, ForkSessionRequest, ForkSessionResponse,
     ImageContent, InitializeRequest, InitializeResponse, ListSessionsRequest, ListSessionsResponse,
-    LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta,
-    NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind,
-    PromptCapabilities, PromptRequest, PromptResponse, RequestPermissionOutcome,
-    RequestPermissionRequest, ResourceLink, SessionCapabilities, SessionCloseCapabilities,
-    SessionConfigOption, SessionId,
-    SessionInfo, SessionInfoUpdate, SessionListCapabilities,
-    SessionModeState, SessionModelState, SessionNotification, SessionUpdate,
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
-    SetSessionModeResponse, SetSessionModelRequest, SetSessionModelResponse, StopReason,
-    TextContent, TextResourceContents, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation,
-    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, UnstructuredCommandInput,
-    Usage, UsageUpdate,
+    LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest,
+    NewSessionResponse, PermissionOption, PermissionOptionKind, PromptCapabilities, PromptRequest,
+    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, ResourceLink,
+    SessionCapabilities, SessionCloseCapabilities, SessionConfigOption, SessionId, SessionInfo,
+    SessionInfoUpdate, SessionListCapabilities, SessionModeState, SessionModelState,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse,
+    SetSessionModelRequest, SetSessionModelResponse, StopReason, TextContent, TextResourceContents,
+    ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind, UnstructuredCommandInput, Usage, UsageUpdate,
 };
 use agent_client_protocol::util::MatchDispatchFrom;
 use agent_client_protocol::{
@@ -1229,14 +1227,15 @@ impl GooseAcpAgent {
             None
         };
 
-        let (model_state, config_options) = build_eager_config_from_inventory(
-            provider_name,
-            model_config.model_name.as_str(),
-            &inventory,
+        let model_state = build_model_state(model_config.model_name.as_str(), &inventory);
+        let provider_selection = session_provider_selection(goose_session);
+        let provider_options = build_provider_options(Some(provider_name)).await;
+        let config_options = build_config_options(
             mode_state,
-            goose_session,
-        )
-        .await;
+            &model_state,
+            provider_selection,
+            provider_options,
+        );
         (Some(model_state), Some(config_options), prebuilt_provider)
     }
 
@@ -1270,6 +1269,41 @@ impl GooseAcpAgent {
                 return;
             }
         };
+        self.refresh_provider_inventory_with_agent(goose_session, &agent, &mut inventory)
+            .await;
+    }
+
+    async fn maybe_refresh_provider_inventory_with_agent(
+        &self,
+        goose_session: &Session,
+        agent: &Arc<Agent>,
+    ) {
+        let Some(provider_name) = goose_session.provider_name.as_deref() else {
+            return;
+        };
+        let Some(mut inventory) = self
+            .provider_inventory
+            .find_entry_for_provider(provider_name)
+            .await
+        else {
+            return;
+        };
+        if !should_refresh_inventory_for_session_init(&inventory) {
+            return;
+        }
+        self.refresh_provider_inventory_with_agent(goose_session, agent, &mut inventory)
+            .await;
+    }
+
+    async fn refresh_provider_inventory_with_agent(
+        &self,
+        goose_session: &Session,
+        agent: &Arc<Agent>,
+        inventory: &mut ProviderInventoryEntry,
+    ) {
+        let Some(provider_name) = goose_session.provider_name.as_deref() else {
+            return;
+        };
         let provider = match agent.provider().await {
             Ok(provider) => provider,
             Err(error) => {
@@ -1282,7 +1316,86 @@ impl GooseAcpAgent {
                 return;
             }
         };
-        self.refresh_inventory_with_provider(provider_name, &provider, &mut inventory)
+        self.refresh_inventory_with_provider(provider_name, &provider, inventory)
+            .await;
+    }
+
+    async fn get_or_create_session_agent(
+        &self,
+        cx: &ConnectionTo<Client>,
+        session_id: String,
+    ) -> Result<Arc<Agent>, agent_client_protocol::Error> {
+        self.agent_manager
+            .get_or_create_agent_with_runtime_context(
+                session_id,
+                RuntimeContext {
+                    mcp_host_info: self.client_mcp_host_info.get().cloned(),
+                    use_login_shell_path: self.use_login_shell_path.get().copied(),
+                    session_name_update_tx: (!self.disable_session_naming)
+                        .then(|| spawn_session_name_update_notifier(cx.clone())),
+                },
+            )
+            .await
+            .internal_err_ctx("Failed to create agent")
+    }
+
+    async fn apply_acp_extension_overrides(
+        &self,
+        cx: &ConnectionTo<Client>,
+        agent: &Arc<Agent>,
+        session: &Session,
+    ) {
+        let client_fs_capabilities = self
+            .client_fs_capabilities
+            .get()
+            .cloned()
+            .unwrap_or_default();
+        let client_terminal = self.client_terminal.get().copied().unwrap_or(false);
+        if !client_fs_capabilities.read_text_file
+            && !client_fs_capabilities.write_text_file
+            && !client_terminal
+        {
+            return;
+        }
+
+        if !agent
+            .extension_manager
+            .is_extension_enabled("developer")
+            .await
+        {
+            return;
+        }
+
+        let context = agent.extension_manager.get_context().clone();
+        let dev_client = match DeveloperClient::new(context) {
+            Ok(dev_client) => dev_client,
+            Err(error) => {
+                warn!(error = %error, "Failed to create ACP developer client");
+                return;
+            }
+        };
+
+        let client: Arc<dyn McpClientTrait> = Arc::new(AcpTools {
+            inner: Arc::new(dev_client),
+            cx: cx.clone(),
+            session_id: SessionId::new(session.id.clone()),
+            fs_read: client_fs_capabilities.read_text_file,
+            fs_write: client_fs_capabilities.write_text_file,
+            terminal: client_terminal,
+        });
+        let info = client.get_info().cloned();
+
+        let developer_config = agent
+            .extension_manager
+            .get_extension_configs()
+            .await
+            .into_iter()
+            .find(|extension| extension.name() == "developer")
+            .unwrap_or_else(|| builtin_to_extension_config("developer"));
+
+        agent
+            .extension_manager
+            .add_client("developer".into(), developer_config, client, info, None)
             .await;
     }
 
@@ -1307,8 +1420,12 @@ impl GooseAcpAgent {
         let model_state = build_model_state(model_config.model_name.as_str(), &inventory);
         let provider_selection = session_provider_selection(goose_session);
         let provider_options = build_provider_options(Some(provider_name)).await;
-        let config_options =
-            build_config_options(mode_state, &model_state, provider_selection, provider_options);
+        let config_options = build_config_options(
+            mode_state,
+            &model_state,
+            provider_selection,
+            provider_options,
+        );
         (Some(model_state), Some(config_options))
     }
 

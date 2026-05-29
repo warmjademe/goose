@@ -2,8 +2,8 @@ use crate::config::GooseMode;
 use crate::providers::inventory::{ProviderInventoryEntry, ProviderInventoryService};
 use crate::session::Session;
 use agent_client_protocol::schema::{
-    ModelId, ModelInfo, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-    SessionMode, SessionModeId, SessionModeState, SessionModelState,
+    ModelId, ModelInfo, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOption, SessionMode, SessionModeId, SessionModeState, SessionModelState,
 };
 use strum::{EnumMessage, VariantNames};
 
@@ -110,21 +110,6 @@ pub(super) fn build_mode_state(
         SessionModeId::new(current_mode.to_string()),
         available,
     ))
-}
-
-pub(super) async fn build_eager_config_from_inventory(
-    provider_name: &str,
-    current_model: &str,
-    inventory: &ProviderInventoryEntry,
-    mode_state: &SessionModeState,
-    goose_session: &Session,
-) -> (SessionModelState, Vec<SessionConfigOption>) {
-    let ms = build_model_state(current_model, inventory);
-    let provider_selection = session_provider_selection(goose_session);
-    let provider_options = build_provider_options(Some(provider_name)).await;
-    let config_options =
-        build_config_options(mode_state, &ms, provider_selection, provider_options);
-    (ms, config_options)
 }
 
 pub(super) fn build_config_options(
