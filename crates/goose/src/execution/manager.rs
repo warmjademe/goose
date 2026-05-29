@@ -112,22 +112,13 @@ impl AgentManager {
     }
 
     pub async fn get_or_create_agent(&self, session_id: String) -> Result<Arc<Agent>> {
-        self.get_or_create_agent_with_runtime_context(session_id, RuntimeContext::default())
-            .await
-    }
-
-    pub async fn get_or_create_agent_with_runtime_context(
-        &self,
-        session_id: String,
-        runtime_context: RuntimeContext,
-    ) -> Result<Arc<Agent>> {
         Ok(self
-            .get_or_create_agent_with_runtime_context_result(session_id, runtime_context)
+            .get_or_create_agent_with_runtime_context(session_id, RuntimeContext::default())
             .await?
             .agent)
     }
 
-    pub async fn get_or_create_agent_with_runtime_context_result(
+    pub async fn get_or_create_agent_with_runtime_context(
         &self,
         session_id: String,
         runtime_context: RuntimeContext,

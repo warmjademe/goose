@@ -4,13 +4,14 @@ use crate::acp::server::{
 use crate::config::{Config, GooseMode};
 use crate::model::ModelConfig;
 use crate::session::SessionType;
+use crate::session::{EnabledExtensionsState, ExtensionState};
 
-use super::{GooseAcpAgent, GooseAcpSession};
+use super::GooseAcpAgent;
 use agent_client_protocol::schema::{
     NewSessionRequest, NewSessionResponse, SessionId, SessionNotification, SessionUpdate,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tracing::debug;
 
 impl GooseAcpAgent {
@@ -56,9 +57,15 @@ impl GooseAcpAgent {
             .await
             .internal_err_ctx("Failed to create session")?;
         let mut builder = self.session_manager.update(&goose_session.id);
+        let extensions = self.initial_session_extensions(config, args.mcp_servers)?;
+        let mut extension_data = goose_session.extension_data.clone();
+        EnabledExtensionsState::new(extensions)
+            .to_extension_data(&mut extension_data)
+            .internal_err_ctx("Failed to initialize session extensions")?;
         builder = builder
             .provider_name(resolved_provider)
-            .model_config(resolved_model_config);
+            .model_config(resolved_model_config)
+            .extension_data(extension_data);
         if let Some(pid) = project_id {
             builder = builder.project_id(Some(pid));
         }
@@ -72,36 +79,13 @@ impl GooseAcpAgent {
             .get_session(&goose_session.id, false)
             .await
             .internal_err_ctx("Failed to reload session")?;
-        let extensions = self.initial_session_extensions(config, args.mcp_servers)?;
-        goose_session = self
-            .persist_session_extensions(&goose_session, extensions)
-            .await?;
         let session_id_str = goose_session.id.clone();
         let sid = sid_short(&session_id_str);
         debug!(target: "perf", sid = %sid, ms = t0.elapsed().as_millis() as u64, "perf: new_session create_session");
 
-        let agent_result = self
-            .get_or_create_session_agent_with_results(cx, session_id_str.clone())
+        let (_agent, extension_results) = self
+            .activate_acp_session(cx, &goose_session, HashMap::new())
             .await?;
-        let agent = agent_result.agent.clone();
-        self.apply_acp_extension_overrides(cx, &agent, &goose_session)
-            .await;
-
-        let acp_session = GooseAcpSession {
-            agent: agent.clone(),
-            tool_requests: HashMap::new(),
-            chain_membership: HashMap::new(),
-            responded_tool_ids: HashSet::new(),
-            summarized_chains: HashSet::new(),
-            cancel_token: None,
-        };
-        self.sessions
-            .lock()
-            .await
-            .insert(session_id_str.clone(), acp_session);
-
-        self.maybe_refresh_provider_inventory_with_agent(&goose_session, &agent)
-            .await;
 
         let goose_session = self
             .session_manager
@@ -126,7 +110,7 @@ impl GooseAcpAgent {
         if let Some(co) = config_options {
             response = response.config_options(co);
         }
-        if let Ok(extension_results) = serde_json::to_value(&agent_result.extension_results) {
+        if let Ok(extension_results) = serde_json::to_value(&extension_results) {
             let mut meta = serde_json::Map::new();
             meta.insert("extensionResults".to_string(), extension_results);
             response = response.meta(meta);

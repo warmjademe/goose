@@ -12,7 +12,9 @@ use crate::agents::extension::{Envs, PLATFORM_EXTENSIONS};
 use crate::agents::extension_manager::TRUSTED_TOOL_UPDATE_META_KEY;
 use crate::agents::mcp_client::{GooseMcpHostInfo, McpClientTrait};
 use crate::agents::platform_extensions::developer::DeveloperClient;
-use crate::agents::{Agent, AgentConfig, ExtensionConfig, GoosePlatform, SessionConfig};
+use crate::agents::{
+    Agent, AgentConfig, ExtensionConfig, ExtensionLoadResult, GoosePlatform, SessionConfig,
+};
 use crate::config::base::CONFIG_YAML_NAME;
 use crate::config::extensions::get_enabled_extensions_with_config;
 use crate::config::paths::Paths;
@@ -32,7 +34,7 @@ use crate::providers::inventory::{
     RefreshPlan, RefreshSkipReason,
 };
 use crate::session::session_manager::{SessionListCursor, SessionType};
-use crate::session::{EnabledExtensionsState, ExtensionState, Session, SessionManager};
+use crate::session::{EnabledExtensionsState, Session, SessionManager};
 use crate::source_roots::SourceRoot;
 use crate::utils::sanitize_unicode_tags;
 use agent_client_protocol::schema::{
@@ -1331,24 +1333,13 @@ impl GooseAcpAgent {
             .await;
     }
 
-    async fn get_or_create_session_agent(
-        &self,
-        cx: &ConnectionTo<Client>,
-        session_id: String,
-    ) -> Result<Arc<Agent>, agent_client_protocol::Error> {
-        Ok(self
-            .get_or_create_session_agent_with_results(cx, session_id)
-            .await?
-            .agent)
-    }
-
     async fn get_or_create_session_agent_with_results(
         &self,
         cx: &ConnectionTo<Client>,
         session_id: String,
     ) -> Result<AgentManagerGetResult, agent_client_protocol::Error> {
         self.agent_manager
-            .get_or_create_agent_with_runtime_context_result(
+            .get_or_create_agent_with_runtime_context(
                 session_id,
                 RuntimeContext {
                     mcp_host_info: self.client_mcp_host_info.get().cloned(),
@@ -1385,29 +1376,6 @@ impl GooseAcpAgent {
         }
 
         Ok(extensions)
-    }
-
-    async fn persist_session_extensions(
-        &self,
-        session: &Session,
-        extensions: Vec<ExtensionConfig>,
-    ) -> Result<Session, agent_client_protocol::Error> {
-        let mut extension_data = session.extension_data.clone();
-        EnabledExtensionsState::new(extensions)
-            .to_extension_data(&mut extension_data)
-            .internal_err_ctx("Failed to initialize session extensions")?;
-
-        self.session_manager
-            .update(&session.id)
-            .extension_data(extension_data)
-            .apply()
-            .await
-            .internal_err_ctx("Failed to update session extensions")?;
-
-        self.session_manager
-            .get_session(&session.id, false)
-            .await
-            .internal_err_ctx("Failed to reload session")
     }
 
     async fn apply_acp_extension_overrides(
@@ -1468,6 +1436,38 @@ impl GooseAcpAgent {
             .extension_manager
             .add_client("developer".into(), developer_config, client, info, None)
             .await;
+    }
+
+    async fn activate_acp_session(
+        &self,
+        cx: &ConnectionTo<Client>,
+        session: &Session,
+        tool_requests: HashMap<String, ToolRequest>,
+    ) -> Result<(Arc<Agent>, Vec<ExtensionLoadResult>), agent_client_protocol::Error> {
+        let agent_result = self
+            .get_or_create_session_agent_with_results(cx, session.id.clone())
+            .await?;
+        let agent = agent_result.agent.clone();
+        self.apply_acp_extension_overrides(cx, &agent, session)
+            .await;
+
+        let acp_session = GooseAcpSession {
+            agent: agent.clone(),
+            tool_requests,
+            chain_membership: HashMap::new(),
+            responded_tool_ids: HashSet::new(),
+            summarized_chains: HashSet::new(),
+            cancel_token: None,
+        };
+        self.sessions
+            .lock()
+            .await
+            .insert(session.id.clone(), acp_session);
+
+        self.maybe_refresh_provider_inventory_with_agent(session, &agent)
+            .await;
+
+        Ok((agent, agent_result.extension_results))
     }
 
     async fn build_eager_session_config(
