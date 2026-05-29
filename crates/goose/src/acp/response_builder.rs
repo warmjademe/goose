@@ -154,3 +154,172 @@ pub(super) fn build_config_options(
         .category(SessionConfigOptionCategory::Model),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    #[test_case(
+        vec!["model-a".into(), "model-b".into()]
+        => SessionModelState::new(
+            ModelId::new("unused"),
+            vec![ModelInfo::new(ModelId::new("unused"), "unused"),
+                 ModelInfo::new(ModelId::new("model-a"), "model-a"),
+                 ModelInfo::new(ModelId::new("model-b"), "model-b")],
+        )
+        ; "returns current and available models"
+    )]
+    #[test_case(
+        vec![]
+        => SessionModelState::new(
+            ModelId::new("unused"),
+            vec![ModelInfo::new(ModelId::new("unused"), "unused")],
+        )
+        ; "empty model list"
+    )]
+    fn test_build_model_state(models: Vec<String>) -> SessionModelState {
+        let inventory = ProviderInventoryEntry {
+            provider_id: "mock".to_string(),
+            provider_name: "Mock".to_string(),
+            description: "Mock".to_string(),
+            default_model: "unused".to_string(),
+            configured: true,
+            provider_type: crate::providers::base::ProviderType::Builtin,
+            category: crate::providers::catalog::ProviderSetupCategory::Model,
+            config_keys: vec![],
+            setup_steps: vec![],
+            supports_refresh: true,
+            refreshing: false,
+            models: models
+                .into_iter()
+                .map(|id| crate::providers::inventory::InventoryModel {
+                    name: id.clone(),
+                    id,
+                    family: None,
+                    context_limit: None,
+                    reasoning: None,
+                    recommended: false,
+                })
+                .collect(),
+            last_updated_at: None,
+            last_refresh_attempt_at: None,
+            last_refresh_error: None,
+            model_selection_hint: None,
+        };
+        build_model_state("unused", &inventory)
+    }
+
+    #[test_case(
+        GooseMode::Auto
+        => Ok(SessionModeState::new(
+            SessionModeId::new("auto"),
+            vec![
+                SessionMode::new(SessionModeId::new("auto"), "auto")
+                    .description("Automatically approve tool calls"),
+                SessionMode::new(SessionModeId::new("approve"), "approve")
+                    .description("Ask before every tool call"),
+                SessionMode::new(SessionModeId::new("smart_approve"), "smart_approve")
+                    .description("Ask only for sensitive tool calls"),
+                SessionMode::new(SessionModeId::new("chat"), "chat")
+                    .description("Chat only, no tool calls"),
+            ],
+        ))
+        ; "auto mode"
+    )]
+    #[test_case(
+        GooseMode::Approve
+        => Ok(SessionModeState::new(
+            SessionModeId::new("approve"),
+            vec![
+                SessionMode::new(SessionModeId::new("auto"), "auto")
+                    .description("Automatically approve tool calls"),
+                SessionMode::new(SessionModeId::new("approve"), "approve")
+                    .description("Ask before every tool call"),
+                SessionMode::new(SessionModeId::new("smart_approve"), "smart_approve")
+                    .description("Ask only for sensitive tool calls"),
+                SessionMode::new(SessionModeId::new("chat"), "chat")
+                    .description("Chat only, no tool calls"),
+            ],
+        ))
+        ; "approve mode"
+    )]
+    fn test_build_mode_state(
+        current_mode: GooseMode,
+    ) -> Result<SessionModeState, agent_client_protocol::Error> {
+        build_mode_state(current_mode)
+    }
+
+    #[test_case(
+        build_mode_state(GooseMode::Auto).unwrap(),
+        "openai",
+        vec![
+            SessionConfigSelectOption::new("anthropic", "anthropic"),
+            SessionConfigSelectOption::new("openai", "openai"),
+        ],
+        SessionModelState::new(
+            ModelId::new("gpt-4"),
+            vec![ModelInfo::new(ModelId::new("gpt-4"), "gpt-4"), ModelInfo::new(ModelId::new("gpt-3.5"), "gpt-3.5")],
+        )
+        => vec![
+            SessionConfigOption::select(
+                "provider", "Provider", "openai",
+                vec![
+                    SessionConfigSelectOption::new("anthropic", "anthropic"),
+                    SessionConfigSelectOption::new("openai", "openai"),
+                ],
+            ),
+            SessionConfigOption::select(
+                "mode", "Mode", "auto",
+                vec![
+                    SessionConfigSelectOption::new("auto", "auto").description("Automatically approve tool calls"),
+                    SessionConfigSelectOption::new("approve", "approve").description("Ask before every tool call"),
+                    SessionConfigSelectOption::new("smart_approve", "smart_approve").description("Ask only for sensitive tool calls"),
+                    SessionConfigSelectOption::new("chat", "chat").description("Chat only, no tool calls"),
+                ],
+            ).category(SessionConfigOptionCategory::Mode),
+            SessionConfigOption::select(
+                "model", "Model", "gpt-4",
+                vec![
+                    SessionConfigSelectOption::new("gpt-4", "gpt-4"),
+                    SessionConfigSelectOption::new("gpt-3.5", "gpt-3.5"),
+                ],
+            ).category(SessionConfigOptionCategory::Model),
+        ]
+        ; "auto mode with multiple models"
+    )]
+    #[test_case(
+        build_mode_state(GooseMode::Approve).unwrap(),
+        "openai",
+        vec![SessionConfigSelectOption::new("openai", "openai")],
+        SessionModelState::new(ModelId::new("only-model"), vec![ModelInfo::new(ModelId::new("only-model"), "only-model")])
+        => vec![
+            SessionConfigOption::select(
+                "provider", "Provider", "openai",
+                vec![SessionConfigSelectOption::new("openai", "openai")],
+            ),
+            SessionConfigOption::select(
+                "mode", "Mode", "approve",
+                vec![
+                    SessionConfigSelectOption::new("auto", "auto").description("Automatically approve tool calls"),
+                    SessionConfigSelectOption::new("approve", "approve").description("Ask before every tool call"),
+                    SessionConfigSelectOption::new("smart_approve", "smart_approve").description("Ask only for sensitive tool calls"),
+                    SessionConfigSelectOption::new("chat", "chat").description("Chat only, no tool calls"),
+                ],
+            ).category(SessionConfigOptionCategory::Mode),
+            SessionConfigOption::select(
+                "model", "Model", "only-model",
+                vec![SessionConfigSelectOption::new("only-model", "only-model")],
+            ).category(SessionConfigOptionCategory::Model),
+        ]
+        ; "approve mode with single model"
+    )]
+    fn test_build_config_options(
+        mode_state: SessionModeState,
+        provider_name: &'static str,
+        provider_options: Vec<SessionConfigSelectOption>,
+        model_state: SessionModelState,
+    ) -> Vec<SessionConfigOption> {
+        build_config_options(&mode_state, &model_state, provider_name, provider_options)
+    }
+}

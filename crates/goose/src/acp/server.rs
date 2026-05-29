@@ -204,16 +204,6 @@ struct ToolChain {
     message_id: String,
 }
 
-#[allow(dead_code)]
-struct SessionInitState {
-    mode_state: SessionModeState,
-    resolved_provider: Result<(String, crate::model::ModelConfig), String>,
-    model_state: Option<SessionModelState>,
-    config_options: Option<Vec<SessionConfigOption>>,
-    prebuilt_provider: Option<Arc<dyn Provider>>,
-    usage_updates: Option<UsageUpdates>,
-}
-
 pub struct GooseAcpAgentOptions {
     pub provider_factory: AcpProviderFactory,
     pub builtins: Vec<String>,
@@ -238,8 +228,6 @@ pub struct GooseAcpAgent {
     permission_manager: Arc<PermissionManager>,
     disable_session_naming: bool,
     provider_inventory: ProviderInventoryService,
-    #[allow(dead_code)]
-    goose_platform: GoosePlatform,
     additional_source_roots: Vec<SourceRoot>,
 }
 
@@ -817,50 +805,6 @@ struct PendingToolCall {
     fallback_title: String,
 }
 
-/// Extract chains (runs of consecutive `MessageContent::ToolRequest` blocks)
-/// from a single message's content. Mirrors the frontend's chain detection in
-/// `MessageBubble.groupContentSections`: any non-tool block (text, thinking,
-/// image, etc.) breaks the run.
-///
-/// Returns one inner Vec per detected chain, holding the tool_call_ids in
-/// document order. Single-tool runs are included; callers (chain
-/// summarization) gate on `chain.len() >= 2`.
-///
-/// Note: this is the per-message view, kept around for tests and potential
-/// replay use. The live runtime path uses a streaming buffer fed by
-/// [`register_chain_buffer`] so chains that span multiple `AgentEvent::Message`
-/// events (e.g. Bedrock-style streaming, where one LLM message is split across
-/// rows — see `f087fa63c`) are still detected.
-#[allow(dead_code)]
-fn extract_tool_chains(
-    content: &[crate::conversation::message::MessageContent],
-) -> Vec<Vec<String>> {
-    use crate::conversation::message::MessageContent;
-    let mut chains: Vec<Vec<String>> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
-
-    for block in content {
-        match block {
-            MessageContent::ToolRequest(tr) => current.push(tr.id.clone()),
-            MessageContent::ToolResponse(_) => {
-                // Server-side, assistant messages don't carry responses;
-                // responses arrive in subsequent messages. Treat as
-                // chain-neutral so a stray response doesn't split a chain
-                // if the data shape ever changes.
-            }
-            _ => {
-                if !current.is_empty() {
-                    chains.push(std::mem::take(&mut current));
-                }
-            }
-        }
-    }
-    if !current.is_empty() {
-        chains.push(current);
-    }
-    chains
-}
-
 /// If `buffer` holds a multi-tool run (≥ 2 tool requests), (re)register a
 /// [`ToolChain`] in `chain_membership` anchored on the **first** tool's
 /// message_id (the row [`SessionManager::update_tool_request_meta`] will patch
@@ -871,11 +815,10 @@ fn extract_tool_chains(
 /// The buffer contains `(tool_call_id, message_id)` pairs in arrival order,
 /// fed by the prompt stream loop. Sequential tool use (Bedrock/Anthropic)
 /// interleaves request → response → request → response across separate
-/// `AgentEvent::Message` events, so per-event `extract_tool_chains` only
-/// sees length-1 chains and would miss the run. Tool responses are
-/// chain-neutral (they don't split the run); only non-tool content (text,
-/// thinking, image, etc.) does, matching the frontend's
-/// `groupContentSections` behavior.
+/// `AgentEvent::Message` events, so a per-event view would only see length-1
+/// chains and miss the run. Tool responses are chain-neutral (they don't
+/// split the run); only non-tool content (text, thinking, image, etc.) does,
+/// matching the frontend's `groupContentSections` behavior.
 fn extend_chain_membership(
     buffer: &[(String, String)],
     chain_membership: &mut HashMap<String, Arc<ToolChain>>,
@@ -950,77 +893,6 @@ fn builtin_to_extension_config(name: &str) -> ExtensionConfig {
     }
 }
 
-#[allow(dead_code)]
-async fn provider_default_model_config(
-    provider_name: &str,
-) -> Result<crate::model::ModelConfig, String> {
-    let entry = crate::providers::get_from_registry(provider_name)
-        .await
-        .map_err(|e| e.to_string())?;
-    let default_model = &entry.metadata().default_model;
-    crate::model::ModelConfig::new(default_model)
-        .map_err(|e| e.to_string())
-        .map(|model_config| model_config.with_canonical_limits(provider_name))
-}
-
-#[allow(dead_code)]
-fn global_model_config(
-    config: &Config,
-    provider_name: &str,
-) -> Result<crate::model::ModelConfig, String> {
-    let model_id = config.get_goose_model().map_err(|e| e.to_string())?;
-    crate::model::ModelConfig::new(&model_id)
-        .map_err(|e| e.to_string())
-        .map(|model_config| model_config.with_canonical_limits(provider_name))
-}
-
-#[allow(dead_code)]
-async fn resolve_provider_and_model_config(
-    config: &Config,
-    provider_selection: Option<&str>,
-    saved_model_config: Option<&crate::model::ModelConfig>,
-) -> Result<(String, crate::model::ModelConfig), String> {
-    if let Some(provider_name) =
-        provider_selection.filter(|provider| *provider != DEFAULT_PROVIDER_ID)
-    {
-        let model_config = match saved_model_config {
-            Some(model_config) => model_config.clone(),
-            None => provider_default_model_config(provider_name).await?,
-        };
-        return Ok((provider_name.to_string(), model_config));
-    }
-    let provider_name = config
-        .get_goose_provider()
-        .map_err(|_| "Missing provider".to_string())?;
-    let model_config = match saved_model_config {
-        Some(model_config) => model_config.clone(),
-        None => global_model_config(config, &provider_name)?,
-    };
-    Ok((provider_name, model_config))
-}
-
-/// Resolve the provider name and model config for a session from an
-/// already-loaded `Config`.
-#[allow(dead_code)]
-async fn resolve_provider_and_model_from_config(
-    config: &Config,
-    goose_session: &Session,
-) -> Result<(String, crate::model::ModelConfig), String> {
-    let global_provider = config.get_goose_provider().ok();
-    let provider_override = goose_session
-        .provider_name
-        .as_deref()
-        .filter(|p| *p != DEFAULT_PROVIDER_ID);
-    let provider_selection = provider_override
-        .filter(|provider_name| Some(*provider_name) != global_provider.as_deref());
-    resolve_provider_and_model_config(
-        config,
-        provider_selection,
-        goose_session.model_config.as_ref(),
-    )
-    .await
-}
-
 fn with_preserved_session_request_params(
     mut model_config: crate::model::ModelConfig,
     current_model_config: Option<&crate::model::ModelConfig>,
@@ -1047,18 +919,6 @@ fn with_preserved_session_request_params(
         model_config = model_config.with_merged_request_params(request_params);
     }
     model_config
-}
-
-/// Convenience wrapper: reads config from disk, then resolves provider + model.
-/// Cheap enough to call from `on_new_session` (file + registry reads, no network).
-#[allow(dead_code)]
-pub(super) async fn resolve_provider_and_model(
-    config_dir: &std::path::Path,
-    goose_session: &Session,
-) -> Result<(String, crate::model::ModelConfig), String> {
-    let config =
-        Config::new(config_dir.join(CONFIG_YAML_NAME), "goose").map_err(|e| e.to_string())?;
-    resolve_provider_and_model_from_config(&config, goose_session).await
 }
 
 fn to_nonnegative_u64(value: Option<i32>) -> Option<u64> {
@@ -1182,17 +1042,12 @@ impl GooseAcpAgent {
             permission_manager,
             disable_session_naming: options.disable_session_naming,
             provider_inventory,
-            goose_platform: options.goose_platform,
             additional_source_roots: options.additional_source_roots,
         })
     }
 
-    fn load_config(&self) -> Result<Config> {
-        Config::new(self.config_dir.join(CONFIG_YAML_NAME), "goose").map_err(Into::into)
-    }
-
-    fn config(&self) -> Result<Config, agent_client_protocol::Error> {
-        self.load_config().internal_err_ctx("Failed to read config")
+    fn config(&self) -> Result<&'static Config, agent_client_protocol::Error> {
+        Ok(Config::global())
     }
 
     async fn create_provider(
@@ -1209,92 +1064,6 @@ impl GooseAcpAgent {
             working_dir,
         )
         .await
-    }
-
-    #[allow(dead_code)]
-    async fn prepare_session_init_config(
-        &self,
-        resolved: &Result<(String, crate::model::ModelConfig), String>,
-        mode_state: &SessionModeState,
-        goose_session: &Session,
-    ) -> (
-        Option<SessionModelState>,
-        Option<Vec<SessionConfigOption>>,
-        Option<Arc<dyn Provider>>,
-    ) {
-        let Ok((provider_name, model_config)) = resolved else {
-            return (None, None, None);
-        };
-
-        let Some(mut inventory) = self
-            .provider_inventory
-            .find_entry_for_provider(provider_name)
-            .await
-        else {
-            return (None, None, None);
-        };
-
-        let prebuilt_provider = if should_refresh_inventory_for_session_init(&inventory) {
-            match self
-                .build_session_provider(provider_name, model_config, goose_session)
-                .await
-            {
-                Some(provider) => {
-                    self.refresh_inventory_with_provider(provider_name, &provider, &mut inventory)
-                        .await;
-                    Some(provider)
-                }
-                None => None,
-            }
-        } else {
-            None
-        };
-
-        let model_state = build_model_state(model_config.model_name.as_str(), &inventory);
-        let provider_selection = session_provider_selection(goose_session);
-        let provider_options = build_provider_options(Some(provider_name)).await;
-        let config_options = build_config_options(
-            mode_state,
-            &model_state,
-            provider_selection,
-            provider_options,
-        );
-        (Some(model_state), Some(config_options), prebuilt_provider)
-    }
-
-    #[allow(dead_code)]
-    async fn maybe_refresh_provider_inventory(&self, goose_session: &Session) {
-        let Some(provider_name) = goose_session.provider_name.as_deref() else {
-            return;
-        };
-        let Some(mut inventory) = self
-            .provider_inventory
-            .find_entry_for_provider(provider_name)
-            .await
-        else {
-            return;
-        };
-        if !should_refresh_inventory_for_session_init(&inventory) {
-            return;
-        }
-        let agent = match self
-            .agent_manager
-            .get_or_create_agent(goose_session.id.clone())
-            .await
-        {
-            Ok(agent) => agent,
-            Err(error) => {
-                warn!(
-                    provider = %provider_name,
-                    session = %goose_session.id,
-                    error = %error,
-                    "failed to get agent during inventory refresh"
-                );
-                return;
-            }
-        };
-        self.refresh_provider_inventory_with_agent(goose_session, &agent, &mut inventory)
-            .await;
     }
 
     async fn maybe_refresh_provider_inventory_with_agent(
@@ -1526,51 +1295,6 @@ impl GooseAcpAgent {
         (Some(model_state), Some(config_options))
     }
 
-    #[allow(dead_code)]
-    async fn build_session_provider(
-        &self,
-        provider_name: &str,
-        model_config: &crate::model::ModelConfig,
-        goose_session: &Session,
-    ) -> Option<Arc<dyn Provider>> {
-        let config = match self.load_config() {
-            Ok(config) => config,
-            Err(error) => {
-                warn!(
-                    provider = %provider_name,
-                    error = %error,
-                    "failed to load config during synchronous inventory refresh"
-                );
-                return None;
-            }
-        };
-
-        let ext_state = EnabledExtensionsState::extensions_or_default(
-            Some(&goose_session.extension_data),
-            &config,
-        );
-        Config::global().invalidate_secrets_cache();
-        match self
-            .create_provider(
-                provider_name,
-                model_config.clone(),
-                ext_state,
-                Some(goose_session.working_dir.clone()),
-            )
-            .await
-        {
-            Ok(provider) => Some(provider),
-            Err(error) => {
-                warn!(
-                    provider = %provider_name,
-                    error = %error,
-                    "failed to initialize provider during synchronous inventory refresh"
-                );
-                None
-            }
-        }
-    }
-
     async fn refresh_inventory_with_provider(
         &self,
         provider_name: &str,
@@ -1672,31 +1396,6 @@ impl GooseAcpAgent {
         {
             *inventory = refreshed_inventory;
         }
-    }
-
-    #[allow(dead_code)]
-    async fn prepare_session_init_state(
-        &self,
-        goose_session: &Session,
-    ) -> Result<SessionInitState, agent_client_protocol::Error> {
-        let mode_state = build_mode_state(goose_session.goose_mode)?;
-        // TODO: Lifei need to remove the call below, because it was called outside. but check load_session, and fork_session too
-        let resolved_provider = resolve_provider_and_model(&self.config_dir, goose_session).await;
-        let usage_updates = build_usage_updates(goose_session);
-
-        self.maybe_refresh_provider_inventory(goose_session).await;
-        let (model_state, config_options) = self
-            .build_eager_session_config(&mode_state, goose_session)
-            .await;
-
-        Ok(SessionInitState {
-            mode_state,
-            resolved_provider,
-            model_state,
-            config_options,
-            prebuilt_provider: None,
-            usage_updates,
-        })
     }
 
     pub async fn has_session(&self, session_id: &str) -> bool {
@@ -2700,7 +2399,7 @@ impl GooseAcpAgent {
         cx: &ConnectionTo<Client>,
         args: LoadSessionRequest,
     ) -> Result<LoadSessionResponse, agent_client_protocol::Error> {
-        self.handle_load_session_refactor(cx, args).await
+        self.handle_load_session(cx, args).await
     }
 
     async fn on_prompt(
@@ -2976,7 +2675,7 @@ impl GooseAcpAgent {
         let provider_name = current_provider.get_name().to_string();
         let current_model_config = current_provider.get_model_config();
         let extensions =
-            EnabledExtensionsState::for_session(&self.session_manager, session_id, &config).await;
+            EnabledExtensionsState::for_session(&self.session_manager, session_id, config).await;
         let model_config = crate::model::ModelConfig::new(model_id)
             .invalid_params_err_ctx("Invalid model config")?
             .with_canonical_limits(&provider_name);
@@ -3123,7 +2822,7 @@ impl GooseAcpAgent {
         );
 
         let extensions =
-            EnabledExtensionsState::for_session(&self.session_manager, session_id, &config).await;
+            EnabledExtensionsState::for_session(&self.session_manager, session_id, config).await;
         let session = self
             .session_manager
             .get_session(session_id, false)
@@ -3301,8 +3000,7 @@ mod tests {
     use crate::conversation::message::{ToolRequest, ToolResponse};
     use agent_client_protocol::schema::{
         EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
-        PermissionOptionId, ResourceLink, SelectedPermissionOutcome, SessionConfigSelectOption,
-        SessionMode, SessionModeId, SessionModeState,
+        PermissionOptionId, ResourceLink, SelectedPermissionOutcome,
     };
     use rmcp::model::{CallToolRequestParams, Content as RmcpContent};
     use std::io::Write;
@@ -3462,90 +3160,6 @@ print(\"hello, world\")
                 },
             })),
         );
-    }
-
-    fn tool_request_block(id: &str) -> crate::conversation::message::MessageContent {
-        crate::conversation::message::MessageContent::ToolRequest(ToolRequest {
-            id: id.to_string(),
-            tool_call: Ok(CallToolRequestParams::new("dummy")),
-            metadata: None,
-            tool_meta: None,
-        })
-    }
-
-    fn text_block(text: &str) -> crate::conversation::message::MessageContent {
-        crate::conversation::message::MessageContent::text(text)
-    }
-
-    #[test]
-    fn extract_tool_chains_returns_empty_for_no_tool_blocks() {
-        let content = vec![text_block("hello"), text_block("world")];
-        assert!(extract_tool_chains(&content).is_empty());
-    }
-
-    #[test]
-    fn extract_tool_chains_returns_single_chain_when_only_tools() {
-        let content = vec![
-            tool_request_block("a"),
-            tool_request_block("b"),
-            tool_request_block("c"),
-        ];
-        let chains = extract_tool_chains(&content);
-        assert_eq!(
-            chains,
-            vec![vec!["a".to_string(), "b".to_string(), "c".to_string()]]
-        );
-    }
-
-    #[test]
-    fn extract_tool_chains_breaks_on_text_block() {
-        let content = vec![
-            tool_request_block("a"),
-            tool_request_block("b"),
-            text_block("interlude"),
-            tool_request_block("c"),
-            tool_request_block("d"),
-        ];
-        let chains = extract_tool_chains(&content);
-        assert_eq!(
-            chains,
-            vec![
-                vec!["a".to_string(), "b".to_string()],
-                vec!["c".to_string(), "d".to_string()],
-            ]
-        );
-    }
-
-    #[test]
-    fn extract_tool_chains_includes_singletons() {
-        let content = vec![
-            tool_request_block("a"),
-            text_block("split"),
-            tool_request_block("b"),
-            text_block("split"),
-            tool_request_block("c"),
-        ];
-        let chains = extract_tool_chains(&content);
-        assert_eq!(
-            chains,
-            vec![
-                vec!["a".to_string()],
-                vec!["b".to_string()],
-                vec!["c".to_string()],
-            ]
-        );
-    }
-
-    #[test]
-    fn extract_tool_chains_keeps_run_when_text_leads_or_trails() {
-        let content = vec![
-            text_block("intro"),
-            tool_request_block("a"),
-            tool_request_block("b"),
-            text_block("outro"),
-        ];
-        let chains = extract_tool_chains(&content);
-        assert_eq!(chains, vec![vec!["a".to_string(), "b".to_string()]]);
     }
 
     fn buf_entry(tool_id: &str, msg_id: &str) -> (String, String) {
@@ -3776,56 +3390,6 @@ print(\"hello, world\")
         expected: PermissionConfirmation,
     ) {
         assert_eq!(outcome_to_confirmation(&input), expected);
-    }
-
-    #[test_case(
-        vec!["model-a".into(), "model-b".into()]
-        => SessionModelState::new(
-            ModelId::new("unused"),
-            vec![ModelInfo::new(ModelId::new("unused"), "unused"),
-                 ModelInfo::new(ModelId::new("model-a"), "model-a"),
-                 ModelInfo::new(ModelId::new("model-b"), "model-b")],
-        )
-        ; "returns current and available models"
-    )]
-    #[test_case(
-        vec![]
-        => SessionModelState::new(
-            ModelId::new("unused"),
-            vec![ModelInfo::new(ModelId::new("unused"), "unused")],
-        )
-        ; "empty model list"
-    )]
-    fn test_build_model_state(models: Vec<String>) -> SessionModelState {
-        let inventory = ProviderInventoryEntry {
-            provider_id: "mock".to_string(),
-            provider_name: "Mock".to_string(),
-            description: "Mock".to_string(),
-            default_model: "unused".to_string(),
-            configured: true,
-            provider_type: crate::providers::base::ProviderType::Builtin,
-            category: crate::providers::catalog::ProviderSetupCategory::Model,
-            config_keys: vec![],
-            setup_steps: vec![],
-            supports_refresh: true,
-            refreshing: false,
-            models: models
-                .into_iter()
-                .map(|id| crate::providers::inventory::InventoryModel {
-                    name: id.clone(),
-                    id,
-                    family: None,
-                    context_limit: None,
-                    reasoning: None,
-                    recommended: false,
-                })
-                .collect(),
-            last_updated_at: None,
-            last_refresh_attempt_at: None,
-            last_refresh_error: None,
-            model_selection_hint: None,
-        };
-        build_model_state("unused", &inventory)
     }
 
     fn json_object(pairs: Vec<(&str, serde_json::Value)>) -> rmcp::model::JsonObject {
@@ -4238,116 +3802,4 @@ print(\"hello, world\")
         assert!(build_usage_updates(&session).is_none());
     }
 
-    #[test_case(
-        GooseMode::Auto
-        => Ok(SessionModeState::new(
-            SessionModeId::new("auto"),
-            vec![
-                SessionMode::new(SessionModeId::new("auto"), "auto")
-                    .description("Automatically approve tool calls"),
-                SessionMode::new(SessionModeId::new("approve"), "approve")
-                    .description("Ask before every tool call"),
-                SessionMode::new(SessionModeId::new("smart_approve"), "smart_approve")
-                    .description("Ask only for sensitive tool calls"),
-                SessionMode::new(SessionModeId::new("chat"), "chat")
-                    .description("Chat only, no tool calls"),
-            ],
-        ))
-        ; "auto mode"
-    )]
-    #[test_case(
-        GooseMode::Approve
-        => Ok(SessionModeState::new(
-            SessionModeId::new("approve"),
-            vec![
-                SessionMode::new(SessionModeId::new("auto"), "auto")
-                    .description("Automatically approve tool calls"),
-                SessionMode::new(SessionModeId::new("approve"), "approve")
-                    .description("Ask before every tool call"),
-                SessionMode::new(SessionModeId::new("smart_approve"), "smart_approve")
-                    .description("Ask only for sensitive tool calls"),
-                SessionMode::new(SessionModeId::new("chat"), "chat")
-                    .description("Chat only, no tool calls"),
-            ],
-        ))
-        ; "approve mode"
-    )]
-    fn test_build_mode_state(
-        current_mode: GooseMode,
-    ) -> Result<SessionModeState, agent_client_protocol::Error> {
-        build_mode_state(current_mode)
-    }
-
-    #[test_case(
-        build_mode_state(GooseMode::Auto).unwrap(),
-        "openai",
-        vec![
-            SessionConfigSelectOption::new("anthropic", "anthropic"),
-            SessionConfigSelectOption::new("openai", "openai"),
-        ],
-        SessionModelState::new(
-            ModelId::new("gpt-4"),
-            vec![ModelInfo::new(ModelId::new("gpt-4"), "gpt-4"), ModelInfo::new(ModelId::new("gpt-3.5"), "gpt-3.5")],
-        )
-        => vec![
-            SessionConfigOption::select(
-                "provider", "Provider", "openai",
-                vec![
-                    SessionConfigSelectOption::new("anthropic", "anthropic"),
-                    SessionConfigSelectOption::new("openai", "openai"),
-                ],
-            ),
-            SessionConfigOption::select(
-                "mode", "Mode", "auto",
-                vec![
-                    SessionConfigSelectOption::new("auto", "auto").description("Automatically approve tool calls"),
-                    SessionConfigSelectOption::new("approve", "approve").description("Ask before every tool call"),
-                    SessionConfigSelectOption::new("smart_approve", "smart_approve").description("Ask only for sensitive tool calls"),
-                    SessionConfigSelectOption::new("chat", "chat").description("Chat only, no tool calls"),
-                ],
-            ).category(SessionConfigOptionCategory::Mode),
-            SessionConfigOption::select(
-                "model", "Model", "gpt-4",
-                vec![
-                    SessionConfigSelectOption::new("gpt-4", "gpt-4"),
-                    SessionConfigSelectOption::new("gpt-3.5", "gpt-3.5"),
-                ],
-            ).category(SessionConfigOptionCategory::Model),
-        ]
-        ; "auto mode with multiple models"
-    )]
-    #[test_case(
-        build_mode_state(GooseMode::Approve).unwrap(),
-        "openai",
-        vec![SessionConfigSelectOption::new("openai", "openai")],
-        SessionModelState::new(ModelId::new("only-model"), vec![ModelInfo::new(ModelId::new("only-model"), "only-model")])
-        => vec![
-            SessionConfigOption::select(
-                "provider", "Provider", "openai",
-                vec![SessionConfigSelectOption::new("openai", "openai")],
-            ),
-            SessionConfigOption::select(
-                "mode", "Mode", "approve",
-                vec![
-                    SessionConfigSelectOption::new("auto", "auto").description("Automatically approve tool calls"),
-                    SessionConfigSelectOption::new("approve", "approve").description("Ask before every tool call"),
-                    SessionConfigSelectOption::new("smart_approve", "smart_approve").description("Ask only for sensitive tool calls"),
-                    SessionConfigSelectOption::new("chat", "chat").description("Chat only, no tool calls"),
-                ],
-            ).category(SessionConfigOptionCategory::Mode),
-            SessionConfigOption::select(
-                "model", "Model", "only-model",
-                vec![SessionConfigSelectOption::new("only-model", "only-model")],
-            ).category(SessionConfigOptionCategory::Model),
-        ]
-        ; "approve mode with single model"
-    )]
-    fn test_build_config_options(
-        mode_state: SessionModeState,
-        provider_name: &'static str,
-        provider_options: Vec<SessionConfigSelectOption>,
-        model_state: SessionModelState,
-    ) -> Vec<SessionConfigOption> {
-        build_config_options(&mode_state, &model_state, provider_name, provider_options)
-    }
 }
