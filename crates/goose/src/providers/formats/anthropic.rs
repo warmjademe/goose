@@ -92,7 +92,13 @@ pub fn thinking_type(model_config: &ModelConfig) -> ThinkingType {
     let effort = model_config.thinking_effort();
 
     if effort.is_none() && legacy_thinking_budget_tokens().is_some() {
-        return ThinkingType::Enabled;
+        // Adaptive-only models reject manual budget_tokens, so a legacy budget
+        // setting must still map to the adaptive payload rather than enabled.
+        return if is_adaptive_model {
+            ThinkingType::Adaptive
+        } else {
+            ThinkingType::Enabled
+        };
     }
 
     match effort.unwrap_or(ThinkingEffort::Off) {
@@ -1614,6 +1620,36 @@ mod tests {
         ]);
         let config = cfg_with_effort("claude-3-7-sonnet-20250219", "high");
         assert_eq!(thinking_budget_tokens(&config), 8192);
+    }
+
+    #[test]
+    fn test_legacy_budget_maps_adaptive_models_to_adaptive() {
+        let _guard = env_lock::lock_env([
+            ("GOOSE_THINKING_EFFORT", None::<&str>),
+            // Set to an unrecognized value so env (read first) shadows any
+            // CLAUDE_THINKING_TYPE in the developer's config file, leaving
+            // thinking_effort() as None so the legacy-budget branch is exercised.
+            ("CLAUDE_THINKING_TYPE", Some("unset")),
+            ("CLAUDE_THINKING_ENABLED", None::<&str>),
+            ("ANTHROPIC_THINKING_BUDGET", Some("8192")),
+            ("CLAUDE_THINKING_BUDGET", None::<&str>),
+        ]);
+
+        // Adaptive-only models must use the adaptive payload even when only a
+        // legacy budget env var is set (no thinking_effort configured).
+        for model in ["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"] {
+            assert_eq!(
+                thinking_type(&cfg(model)),
+                ThinkingType::Adaptive,
+                "model {model}"
+            );
+        }
+
+        // Non-adaptive models keep the legacy enabled/budget payload.
+        assert_eq!(
+            thinking_type(&cfg("claude-3-7-sonnet-20250219")),
+            ThinkingType::Enabled
+        );
     }
 
     #[test]
