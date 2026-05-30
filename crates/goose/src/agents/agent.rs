@@ -214,6 +214,7 @@ pub struct Agent {
     container: Mutex<Option<Container>>,
     goal: Mutex<Option<String>>,
     grind: Mutex<Option<String>>,
+    complexity_router: Option<Arc<super::complexity_router::ComplexityModel>>,
 }
 
 #[derive(Clone, Debug)]
@@ -333,6 +334,8 @@ impl Agent {
             container: Mutex::new(None),
             goal: Mutex::new(None),
             grind: Mutex::new(None),
+            complexity_router: super::complexity_router::ComplexityModel::try_load_default()
+                .map(Arc::new),
         }
     }
 
@@ -1586,17 +1589,48 @@ impl Agent {
 
         let provider = self.provider().await?;
         let provider_name = provider.get_name().to_string();
-        let requested_model = provider.get_model_config().model_name;
-        let inference = provider
-            .fetch_model_info(&requested_model)
-            .await
-            .ok()
-            .and_then(|model_info| model_info.resolved_model)
-            .map(|resolved_model| InferenceMetadata {
-                provider: provider_name,
-                requested_model,
-                resolved_model: Some(resolved_model),
+        let base_model_config = provider.get_model_config();
+        let requested_model = base_model_config.model_name.clone();
+
+        let route_decision = self
+            .complexity_router
+            .as_ref()
+            .and_then(|router| {
+                super::complexity_router::route(router.as_ref(), &conversation)
             });
+
+        // Decide once per `reply_internal` call which model config to use.
+        // If the complexity router says "use_fast" and the provider has a
+        // `fast_model_config`, swap. Otherwise main config.
+        let effective_model_config = match route_decision {
+            Some(d) if d.use_fast && base_model_config.fast_model_config.is_some() => {
+                tracing::info!(
+                    target: "goose::complexity_router",
+                    complexity = d.complexity,
+                    elapsed_ms = d.elapsed_ms,
+                    "routing to fast model",
+                );
+                base_model_config.use_fast_model()
+            }
+            Some(d) => {
+                tracing::info!(
+                    target: "goose::complexity_router",
+                    complexity = d.complexity,
+                    elapsed_ms = d.elapsed_ms,
+                    use_fast = d.use_fast,
+                    has_fast_config = base_model_config.fast_model_config.is_some(),
+                    "routing to main model",
+                );
+                base_model_config.clone()
+            }
+            None => base_model_config.clone(),
+        };
+
+        let inference = Some(InferenceMetadata {
+            provider: provider_name,
+            requested_model,
+            resolved_model: Some(effective_model_config.model_name.clone()),
+        });
         let session_manager = self.config.session_manager.clone();
         let session_id = session_config.id.clone();
         if !self.config.disable_session_naming {
@@ -1676,6 +1710,7 @@ impl Agent {
 
                 let mut stream = Self::stream_response_from_provider(
                     self.provider().await?,
+                    effective_model_config.clone(),
                     &session_config.id,
                     &system_prompt,
                     conversation_with_moim.messages(),

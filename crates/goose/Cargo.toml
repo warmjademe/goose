@@ -206,6 +206,9 @@ process-wrap = { version = "9", default-features = false, features = ["std"] }
 nostr = { version = "0.44", default-features = false, features = ["nip44", "std"], optional = true }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"], optional = true }
 rustls = { workspace = true, optional = true }
+ort = { version = "2.0.0-rc.12", features = ["load-dynamic"] }
+safetensors = "0.7.0"
+ndarray = "0.17.2"
 
 pctx_code_mode = { version = "0.3", default-features = false, optional = true }
 

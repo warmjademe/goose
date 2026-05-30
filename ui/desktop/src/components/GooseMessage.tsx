@@ -187,7 +187,16 @@ export default function GooseMessage({
                 })}
               </div>
               <div className="text-xs text-text-secondary transition-all duration-200 group-hover:-translate-y-4 group-hover:opacity-0 pt-1">
-                {!isStreaming && !hideTimestamp && timestamp}
+                {!isStreaming && !hideTimestamp && (
+                  <>
+                    {timestamp}
+                    {message.metadata?.inference?.resolvedModel && (
+                      <span className="ml-2 opacity-70">
+                        @ {message.metadata.inference.resolvedModel}
+                      </span>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </div>

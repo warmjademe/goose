@@ -1,4 +1,5 @@
 mod agent;
+pub mod complexity_router;
 pub mod container;
 pub mod execute_commands;
 pub mod extension;

@@ -47,9 +47,12 @@ pub struct OpenRouterProvider {
 
 impl OpenRouterProvider {
     pub async fn from_env(model: ModelConfig) -> Result<Self> {
-        let model = model.with_fast(OPENROUTER_DEFAULT_FAST_MODEL, OPENROUTER_PROVIDER_NAME)?;
-
         let config = crate::config::Config::global();
+        let fast_model_name: String = config
+            .get_param("OPENROUTER_FAST_MODEL")
+            .unwrap_or_else(|_| OPENROUTER_DEFAULT_FAST_MODEL.to_string());
+        let model = model.with_fast(&fast_model_name, OPENROUTER_PROVIDER_NAME)?;
+
         let api_key: String = config.get_secret("OPENROUTER_API_KEY")?;
         let host: String = config
             .get_param("OPENROUTER_HOST")

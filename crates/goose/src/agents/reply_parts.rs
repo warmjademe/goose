@@ -250,14 +250,13 @@ impl Agent {
     )]
     pub(crate) async fn stream_response_from_provider(
         provider: Arc<dyn Provider>,
+        model_config: crate::model::ModelConfig,
         session_id: &str,
         system_prompt: &str,
         messages: &[Message],
         tools: &[Tool],
         toolshim_tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let config = provider.get_model_config();
-
         let filtered_messages: Vec<Message> = messages
             .iter()
             .filter(|m| m.is_agent_visible())
@@ -265,7 +264,7 @@ impl Agent {
             .collect();
 
         // Convert tool messages to text if toolshim is enabled
-        let messages_for_provider = if config.toolshim {
+        let messages_for_provider = if model_config.toolshim {
             convert_tool_messages_to_text(&filtered_messages)
         } else {
             Conversation::new_unvalidated(filtered_messages)
@@ -276,10 +275,8 @@ impl Agent {
         let tools = tools.to_owned();
         let toolshim_tools = toolshim_tools.to_owned();
         let provider = provider.clone();
+        let config = model_config.clone();
 
-        // Capture errors during stream creation and return them as part of the stream
-        // so they can be handled by the existing error handling logic in the agent
-        let model_config = provider.get_model_config();
         debug!("WAITING_LLM_STREAM_START");
         let stream_result = provider
             .stream(
