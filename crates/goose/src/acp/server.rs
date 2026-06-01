@@ -1241,6 +1241,9 @@ impl GooseAcpAgent {
                 .apply()
                 .await
                 .internal_err_ctx("Failed to update session")?;
+
+            let _ = self.agent_manager.remove_session(&session_id).await;
+
             session = self
                 .session_manager
                 .get_session(&session_id, include_messages_on_reload)
@@ -2840,6 +2843,10 @@ impl GooseAcpAgent {
             }
         }
         sessions.remove(session_id);
+        drop(sessions);
+
+        let _ = self.agent_manager.remove_session(session_id).await;
+
         info!(session_id = %session_id, "ACP session closed");
         Ok(CloseSessionResponse::new())
     }
