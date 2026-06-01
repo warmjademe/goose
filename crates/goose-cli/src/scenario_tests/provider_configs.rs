@@ -1,5 +1,5 @@
 //! Providers for the scenario tests. Keep in sync with
-//! goose/crates/goose/src/providers/factory.rs
+//! goose/crates/goose-providers/src/providers/init.rs
 
 use std::collections::HashMap;
 use std::sync::LazyLock;

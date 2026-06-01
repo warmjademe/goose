@@ -1,0 +1,41 @@
+[package]
+name = "goose-providers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Provider implementations for Goose"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+code-mode = ["goose/code-mode"]
+local-inference = ["goose/local-inference"]
+aws-providers = ["goose/aws-providers"]
+cuda = ["goose/cuda", "local-inference"]
+vulkan = ["goose/vulkan", "local-inference"]
+telemetry = ["goose/telemetry"]
+nostr = ["goose/nostr"]
+otel = ["goose/otel"]
+system-keyring = ["goose/system-keyring"]
+portable-default = ["goose/portable-default"]
+rustls-tls = ["goose/rustls-tls", "reqwest/rustls"]
+native-tls = ["goose/native-tls", "reqwest/native-tls"]
+
+[dependencies]
+goose = { path = "../goose", default-features = false }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[bin]]
+name = "build_canonical_models"
+path = "src/providers/canonical/build_canonical_models.rs"

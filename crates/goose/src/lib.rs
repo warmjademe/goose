@@ -30,6 +30,7 @@ pub mod plugins;
 #[cfg(feature = "telemetry")]
 pub mod posthog;
 pub mod prompt_template;
+#[path = "../../goose-providers/src/providers/mod.rs"]
 pub mod providers;
 pub mod recipe;
 pub mod recipe_deeplink;

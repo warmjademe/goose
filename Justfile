@@ -318,7 +318,7 @@ bump-version version:
 
 # rebuild canonical model registry and mapping report from models.dev
 build-canonical-models:
-    @cargo run --bin build_canonical_models
+    @cargo run -p goose-providers --features rustls-tls --bin build_canonical_models
 
 # bump version, rebuild canonical models, and commit
 prepare-release version:
@@ -330,8 +330,8 @@ prepare-release version:
         ui/desktop/package.json \
         ui/pnpm-lock.yaml \
         ui/desktop/openapi.json \
-        crates/goose/src/providers/canonical/data/canonical_models.json \
-        crates/goose/src/providers/canonical/data/provider_metadata.json
+        crates/goose-providers/src/providers/canonical/data/canonical_models.json \
+        crates/goose-providers/src/providers/canonical/data/provider_metadata.json
     @git commit --message "chore(release): release version {{ version }}"
 
 set-openapi-version version:

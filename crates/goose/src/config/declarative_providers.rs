@@ -24,7 +24,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use utoipa::ToSchema;
 
-static FIXED_PROVIDERS: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/providers/declarative");
+static FIXED_PROVIDERS: Dir =
+    include_dir!("$CARGO_MANIFEST_DIR/../goose-providers/src/providers/declarative");
 
 pub fn custom_providers_dir() -> std::path::PathBuf {
     Paths::config_dir().join("custom_providers")
@@ -639,7 +640,7 @@ mod tests {
 
     #[test]
     fn test_tanzu_json_deserializes() {
-        let json = include_str!("../providers/declarative/tanzu.json");
+        let json = include_str!("../../../goose-providers/src/providers/declarative/tanzu.json");
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("tanzu.json should parse");
         assert_eq!(config.name, "tanzu_ai");
@@ -668,7 +669,8 @@ mod tests {
 
     #[test]
     fn test_llama_swap_json_deserializes() {
-        let json = include_str!("../providers/declarative/llama_swap.json");
+        let json =
+            include_str!("../../../goose-providers/src/providers/declarative/llama_swap.json");
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("llama_swap.json should parse");
         assert_eq!(config.name, "llama_swap");
@@ -696,7 +698,7 @@ mod tests {
 
     #[test]
     fn test_existing_json_files_still_deserialize_without_new_fields() {
-        let json = include_str!("../providers/declarative/groq.json");
+        let json = include_str!("../../../goose-providers/src/providers/declarative/groq.json");
         let config =
             deserialize_provider_config(json).expect("groq.json should parse without env_vars");
         assert!(config.env_vars.is_none());
@@ -753,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_zai_json_deserializes() {
-        let json = include_str!("../providers/declarative/zai.json");
+        let json = include_str!("../../../goose-providers/src/providers/declarative/zai.json");
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("zai.json should parse");
         assert_eq!(config.name, "zai");
@@ -781,25 +783,28 @@ mod tests {
         for (name, json) in [
             (
                 "custom_deepseek",
-                include_str!("../providers/declarative/deepseek.json"),
+                include_str!("../../../goose-providers/src/providers/declarative/deepseek.json"),
             ),
             (
                 "moonshot",
-                include_str!("../providers/declarative/moonshot.json"),
+                include_str!("../../../goose-providers/src/providers/declarative/moonshot.json"),
             ),
             (
                 "novita",
-                include_str!("../providers/declarative/novita.json"),
+                include_str!("../../../goose-providers/src/providers/declarative/novita.json"),
             ),
             (
                 "nvidia",
-                include_str!("../providers/declarative/nvidia.json"),
+                include_str!("../../../goose-providers/src/providers/declarative/nvidia.json"),
             ),
             (
                 "custom_tensorix",
-                include_str!("../providers/declarative/tensorix.json"),
+                include_str!("../../../goose-providers/src/providers/declarative/tensorix.json"),
             ),
-            ("zhipu", include_str!("../providers/declarative/zhipu.json")),
+            (
+                "zhipu",
+                include_str!("../../../goose-providers/src/providers/declarative/zhipu.json"),
+            ),
         ] {
             let config: DeclarativeProviderConfig =
                 serde_json::from_str(json).expect("provider json should parse");
@@ -811,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_nvidia_json_deserializes() {
-        let json = include_str!("../providers/declarative/nvidia.json");
+        let json = include_str!("../../../goose-providers/src/providers/declarative/nvidia.json");
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("nvidia.json should parse");
         assert_eq!(config.name, "nvidia");
@@ -836,7 +841,7 @@ mod tests {
 
     #[test]
     fn test_nearai_json_deserializes() {
-        let json = include_str!("../providers/declarative/nearai.json");
+        let json = include_str!("../../../goose-providers/src/providers/declarative/nearai.json");
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("nearai.json should parse");
         assert_eq!(config.name, "nearai");
@@ -858,7 +863,9 @@ mod tests {
 
     #[test]
     fn test_vercel_ai_gateway_json_deserializes() {
-        let json = include_str!("../providers/declarative/vercel_ai_gateway.json");
+        let json = include_str!(
+            "../../../goose-providers/src/providers/declarative/vercel_ai_gateway.json"
+        );
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("vercel_ai_gateway.json should parse");
         assert_eq!(config.name, "vercel_ai_gateway");
@@ -959,7 +966,8 @@ mod tests {
 
     #[test]
     fn test_opencode_go_json_deserializes() {
-        let json = include_str!("../providers/declarative/opencode_go.json");
+        let json =
+            include_str!("../../../goose-providers/src/providers/declarative/opencode_go.json");
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("opencode_go.json should parse");
         assert_eq!(config.name, "opencode_go");
@@ -1070,7 +1078,8 @@ mod tests {
 
     #[test]
     fn test_atomic_chat_json_deserializes() {
-        let json = include_str!("../providers/declarative/atomic_chat.json");
+        let json =
+            include_str!("../../../goose-providers/src/providers/declarative/atomic_chat.json");
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("atomic_chat.json should parse");
         assert_eq!(config.name, "atomic_chat");
@@ -1108,7 +1117,7 @@ mod tests {
 
     #[test]
     fn test_routstr_json_deserializes() {
-        let json = include_str!("../providers/declarative/routstr.json");
+        let json = include_str!("../../../goose-providers/src/providers/declarative/routstr.json");
         let config: DeclarativeProviderConfig =
             serde_json::from_str(json).expect("routstr.json should parse");
         assert_eq!(config.name, "routstr");

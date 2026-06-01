@@ -45,7 +45,7 @@ goose's architecture is designed for extensibility. Organizations can create "re
 | What You Want | Where to Look | Complexity |
 |---------------|---------------|------------|
 | Preconfigure a model/provider | `config.yaml`, `init-config.yaml`, environment variables | Low |
-| Add custom AI providers | `crates/goose/src/providers/declarative/` | Low |
+| Add custom AI providers | `crates/goose-providers/src/providers/declarative/` | Low |
 | Bundle custom MCP extensions | `config.yaml` extensions section, `ui/desktop/src/built-in-extensions.json`, `ui/desktop/src/components/settings/extensions/bundled-extensions.json` | Medium |
 | Modify system prompts | `crates/goose/src/prompts/` | Low |
 | Customize desktop branding | `ui/desktop/` (icons, names, colors) | Medium |
@@ -132,7 +132,7 @@ export OLLAMA_HOST=http://localhost:11434  # Or your hosted instance
 ### Technical Details
 
 - Provider configuration: `crates/goose/src/config/base.rs`
-- Ollama provider implementation: `crates/goose/src/providers/ollama.rs`
+- Ollama provider implementation: `crates/goose-providers/src/providers/ollama.rs`
 - Config precedence: Environment variables → config.yaml → defaults
 
 ---
@@ -510,16 +510,16 @@ Supported engines: `openai`, `anthropic`, `ollama`
 
 For providers with unique APIs, implement the Provider trait:
 
-1. Create a new file in `crates/goose/src/providers/`
+1. Create a new file in `crates/goose-providers/src/providers/`
 2. Implement the `Provider` trait from `base.rs`
-3. Register in `crates/goose/src/providers/factory.rs`
+3. Register in `crates/goose-providers/src/providers/init.rs`
 
 ### Technical Details
 
 - Declarative providers: `crates/goose/src/config/declarative_providers.rs`
-- Provider trait: `crates/goose/src/providers/base.rs`
-- Provider registration: `crates/goose/src/providers/factory.rs`
-- Example providers: `crates/goose/src/providers/declarative/*.json`
+- Provider trait: `crates/goose-providers/src/providers/base.rs`
+- Provider registration: `crates/goose-providers/src/providers/init.rs`
+- Example providers: `crates/goose-providers/src/providers/declarative/*.json`
 
 ---
 

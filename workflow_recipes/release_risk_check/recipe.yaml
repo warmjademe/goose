@@ -31,7 +31,7 @@ instructions: |
 
   **HIGH — changes here affect core functionality:**
   - **Agent loop** (`crates/goose/src/agents/`) — message routing, turn limits, conversation compaction.
-  - **Provider integrations** (`crates/goose/src/providers/`) — LLM API calls, credential handling, cost tracking, response parsing.
+  - **Provider integrations** (`crates/goose-providers/src/providers/`) — LLM API calls, credential handling, cost tracking, response parsing.
   - **Extension manager** (`crates/goose/src/agents/extension_manager.rs`) — loads MCP extensions, tool discovery. Malicious extensions could be loaded.
   - **Server routes** (`crates/goose-server/src/routes/`) — HTTP API that the desktop UI and CLI talk to.
 

@@ -7,8 +7,8 @@ to canonical IDs (e.g., `anthropic/claude-3.5-sonnet`).
 ## Build Canonical Models
 Fetches latest model metadata from OpenRouter and validates provider mappings:
 ```bash
-cargo run --bin build_canonical_models              # Build and check (default)
-cargo run --bin build_canonical_models --no-check   # Build only, skip checker
+cargo run -p goose-providers --features rustls-tls --bin build_canonical_models              # Build and check (default)
+cargo run -p goose-providers --features rustls-tls --bin build_canonical_models --no-check   # Build only, skip checker
 ```
 
 This script performs two operations by default:

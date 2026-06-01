@@ -4,15 +4,15 @@
 /// By default, it also checks which models from top providers are properly mapped.
 ///
 /// Usage:
-///   cargo run --bin build_canonical_models              # Build and check (default)
-///   cargo run --bin build_canonical_models --no-check   # Build only, skip checker
+///   cargo run -p goose-providers --features rustls-tls --bin build_canonical_models              # Build and check (default)
+///   cargo run -p goose-providers --features rustls-tls --bin build_canonical_models --no-check   # Build only, skip checker
 ///
 use anyhow::{Context, Result};
 use clap::Parser;
-use goose::providers::canonical::{
+use goose_providers::canonical::{
     canonical_name, CanonicalModel, CanonicalModelRegistry, Limit, Modalities, Modality, Pricing,
 };
-use goose::providers::{canonical::ModelMapping, create_with_named_model};
+use goose_providers::{canonical::ModelMapping, create_with_named_model};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
