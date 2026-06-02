@@ -4676,8 +4676,6 @@ name = "goose-models-db"
 version = "1.36.0"
 dependencies = [
  "anyhow",
- "chrono",
- "clap",
  "once_cell",
  "regex",
  "reqwest 0.13.4",
@@ -4770,12 +4768,10 @@ dependencies = [
 name = "goose-types"
 version = "1.36.0"
 dependencies = [
- "anyhow",
  "base64 0.22.1",
  "chrono",
  "env-lock",
  "goose-models-db",
- "once_cell",
  "regex",
  "rmcp",
  "serde",

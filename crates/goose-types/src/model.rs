@@ -202,8 +202,8 @@ impl ModelConfig {
         context_env_var: Option<&str>,
         config: &C,
     ) -> Result<Self, ConfigError> {
-        let config = Self::new_base(model_name, context_env_var, config)?;
-        Ok(config.with_canonical_limits_config(provider_name, config))
+        let model_config = Self::new_base(model_name, context_env_var, config)?;
+        Ok(model_config.with_canonical_limits_config(provider_name, config))
     }
 
     fn new_base<C: Config>(

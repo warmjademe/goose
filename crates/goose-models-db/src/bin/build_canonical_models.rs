@@ -25,11 +25,6 @@ struct ProviderMetadata {
 
 const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
 const DEFAULT_CONTEXT_LIMIT: usize = 128_000;
-const SEPARATOR: &str =
-    "================================================================================";
-const SUBSEPARATOR: &str =
-    "--------------------------------------------------------------------------------";
-
 fn is_compatible_provider(npm: &str) -> bool {
     npm.contains("openai") || npm.contains("anthropic") || npm.contains("ollama")
 }

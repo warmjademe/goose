@@ -1,23 +1,28 @@
-# Canonical Model System
+# Canonical Model Registry
 
-Provides a unified view of model metadata (pricing, capabilities, context limits) across different LLM providers. 
-Normalizes provider-specific model names (e.g., `claude-3-5-sonnet-20241022`) 
-to canonical IDs (e.g., `anthropic/claude-3.5-sonnet`).
+`goose-models-db` packages Goose's bundled canonical model metadata and model-name normalization helpers.
 
-## Build Canonical Models
-Fetches latest model metadata from OpenRouter and validates provider mappings:
+The registry provides a unified view of model metadata across providers, including:
+
+- canonical model IDs
+- context and output token limits
+- pricing metadata
+- modality and capability metadata
+- provider/model name normalization
+
+For example, provider-specific names such as `claude-3-5-sonnet-20241022` can be normalized to canonical IDs such as `anthropic/claude-3.5-sonnet`.
+
+## Updating bundled data
+
+The generator fetches model metadata from `models.dev` and updates the bundled JSON files in `src/canonical/data`:
+
 ```bash
-cargo run --bin build_canonical_models              # Build and check (default)
-cargo run --bin build_canonical_models --no-check   # Build only, skip checker
+cargo run -p goose-models-db --bin build_canonical_models
 ```
 
-This script performs two operations by default:
-1. **Builds canonical models** - Fetches from OpenRouter API and updates the registry
-   - Writes to: `src/providers/canonical/data/canonical_models.json`
-2. **Checks model mappings** (unless `--no-check` is passed) - Tests provider mappings and tracks changes over time
-   - Reports unmapped models
-   - Compares with previous runs (like a lock file)
-   - Shows changed/added/removed mappings
-   - Writes to: `src/providers/canonical/data/canonical_mapping_report.json`
+Generated files:
 
-The script is located in this directory: `build_canonical_models.rs`
+- `src/canonical/data/canonical_models.json`
+- `src/canonical/data/provider_metadata.json`
+
+The crate intentionally only packages the registry and its generator. Provider-specific live API validation belongs outside this crate.
