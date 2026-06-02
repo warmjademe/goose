@@ -215,6 +215,7 @@ pctx_code_mode = { version = "0.3", default-features = false, optional = true }
 icu_calendar = { version = "=2.1.1", default-features = false }
 icu_locale = { version = "=2.1.1", default-features = false }
 llama-cpp-sys-2 = { workspace = true, optional = true }
+goose-types = { version = "1.36.0", path = "../goose-types", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { workspace = true }

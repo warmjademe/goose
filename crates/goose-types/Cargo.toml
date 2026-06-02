@@ -1,0 +1,26 @@
+[package]
+name = "goose-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared provider-facing Goose data types"
+
+[dependencies]
+base64 = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+rmcp = { workspace = true, features = ["server"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+unicode-normalization = { version = "0.1.22", default-features = false, features = ["std"] }
+utoipa = { workspace = true, features = ["chrono"] }
+uuid = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["macros"] }

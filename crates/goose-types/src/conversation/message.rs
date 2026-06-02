@@ -1,6 +1,5 @@
 use crate::conversation::tool_result_serde;
-use crate::mcp_utils::{extract_text_from_resource, ToolResult};
-use crate::utils::sanitize_unicode_tags;
+use crate::{extract_text_from_resource, sanitize_unicode_tags, ToolResult};
 use chrono::Utc;
 use rmcp::model::{
     AnnotateAble, CallToolRequestParams, CallToolResult, Content, ImageContent, JsonObject,
@@ -57,12 +56,6 @@ where
             let original = &text_content.text;
             let sanitized = sanitize_unicode_tags(original);
             if *original != sanitized {
-                tracing::info!(
-                    original = %original,
-                    sanitized = %sanitized,
-                    removed_count = original.len() - sanitized.len(),
-                    "Unicode Tags sanitized during Message deserialization"
-                );
                 text_content.text = sanitized;
             }
         }
@@ -118,7 +111,7 @@ impl ToolRequest {
     }
 
     /// Returns the persisted LLM-generated title for this tool call, if any.
-    /// Set asynchronously by [`crate::acp::server`] after `provider.complete_fast`
+    /// Set asynchronously by `crate::acp::server` after `provider.complete_fast`
     /// resolves; survives session reload via SQLite. Falls back to `None` for
     /// older sessions that predate persistence — callers should use a deterministic
     /// title in that case.
@@ -132,7 +125,7 @@ impl ToolRequest {
     /// Returns the persisted per-chain summary anchored on this tool request,
     /// if any. Only the FIRST tool request in a chain (a run of consecutive
     /// tool blocks within one assistant message) carries this. See
-    /// [`crate::acp::server`] for how chains are detected and summarized.
+    /// `crate::acp::server` for how chains are detected and summarized.
     pub fn persisted_chain_summary(&self) -> Option<PersistedChainSummary> {
         let obj = self
             .tool_meta
