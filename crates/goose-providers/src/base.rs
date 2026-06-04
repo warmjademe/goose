@@ -364,16 +364,25 @@ pub fn get_current_model() -> Option<String> {
 
 pub static MSG_COUNT_FOR_SESSION_NAME_GENERATION: usize = 3;
 
+/// Information about a model's capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub struct ModelInfo {
+    /// The name of the model
     pub name: String,
+    /// The underlying model resolved from provider metadata, when the configured model is an alias or endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_model: Option<String>,
+    /// The maximum context length this model supports
     pub context_limit: usize,
+    /// Cost per token for input in USD (optional)
     pub input_token_cost: Option<f64>,
+    /// Cost per token for output in USD (optional)
     pub output_token_cost: Option<f64>,
+    /// Currency for the costs (default: "$")
     pub currency: Option<String>,
+    /// Whether this model supports cache control
     pub supports_cache_control: Option<bool>,
+    /// Whether this model supports reasoning/thinking controls
     #[serde(default)]
     pub reasoning: bool,
 }
@@ -446,17 +455,27 @@ pub enum ProviderType {
     Custom,
 }
 
+/// Metadata about a provider's configuration requirements and capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ProviderMetadata {
+    /// The unique identifier for this provider
     pub name: String,
+    /// Display name for the provider in UIs
     pub display_name: String,
+    /// Description of the provider's capabilities
     pub description: String,
+    /// The default/recommended model for this provider
     pub default_model: String,
+    /// A list of currently known models with their capabilities
     pub known_models: Vec<ModelInfo>,
+    /// Link to the docs where models can be found
     pub model_doc_link: String,
+    /// Required configuration keys
     pub config_keys: Vec<ConfigKey>,
+    /// step-by-step instructions for set up providers eg: api key
     #[serde(default)]
     pub setup_steps: Vec<String>,
+    /// Hint shown in the model picker when this provider manages its own model selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_selection_hint: Option<String>,
 }
@@ -534,15 +553,26 @@ impl ProviderMetadata {
     }
 }
 
+/// Configuration key metadata for provider setup
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ConfigKey {
+    /// The name of the configuration key (e.g., "API_KEY")
     pub name: String,
+    /// Whether this key is required for the provider to function
     pub required: bool,
+    /// Whether this key should be stored securely (e.g., in keychain)
     pub secret: bool,
+    /// Optional default value for the key
     pub default: Option<String>,
+    /// Whether this key should be configured using an OAuth flow
+    /// When true, the provider's configure_oauth() method will be called instead of prompting for manual input
     pub oauth_flow: bool,
+    /// Whether this OAuth flow uses the device code grant (RFC 8628)
+    /// When true, the user must enter a verification code in the browser
     #[serde(default)]
     pub device_code_flow: bool,
+    /// Whether this key should be shown prominently during provider setup
+    /// (onboarding, settings modal, CLI configure)
     #[serde(default)]
     pub primary: bool,
 }
