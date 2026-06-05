@@ -3,12 +3,12 @@ use crate::agents::mcp_client::{Error, McpClientTrait};
 use crate::agents::reply_parts::coerce_tool_arguments;
 use crate::agents::tool_execution::ToolCallContext;
 use crate::config::paths::Paths;
-use crate::conversation::message::Message;
 use crate::goose_apps::McpAppResource;
 use crate::goose_apps::{GooseApp, WindowProps};
 use crate::prompt_template::render_template;
 use crate::providers::base::Provider;
 use async_trait::async_trait;
+use goose_providers::conversation::message::Message;
 use rmcp::model::{
     CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListResourcesResult,
     ListToolsResult, Meta, RawResource, ReadResourceResult, Resource, ResourceContents,
@@ -666,7 +666,9 @@ fn extract_tool_response<T: serde::de::DeserializeOwned>(
     let schema_value = serde_json::Value::Object(tool_schema.clone());
 
     for content in &response.content {
-        if let crate::conversation::message::MessageContent::ToolRequest(tool_req) = content {
+        if let goose_providers::conversation::message::MessageContent::ToolRequest(tool_req) =
+            content
+        {
             if let Ok(tool_call) = &tool_req.tool_call {
                 if tool_call.name == tool_name {
                     let params = tool_call

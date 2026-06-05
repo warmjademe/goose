@@ -9,14 +9,14 @@ use super::openai_compatible::handle_status;
 use super::retry::{ProviderRetry, RetryConfig};
 use super::utils::{ImageFormat, RequestLog};
 use crate::config::declarative_providers::DeclarativeProviderConfig;
-use crate::conversation::message::Message;
-use crate::model::ModelConfig;
 use crate::providers::formats::ollama::{create_request, response_to_streaming_message_ollama};
 use anyhow::{Error, Result};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::TryStreamExt;
+use goose_providers::conversation::message::Message;
+use goose_providers::model::ModelConfig;
 use reqwest::Response;
 use rmcp::model::Tool;
 use serde_json::{json, Value};
@@ -563,7 +563,8 @@ mod tests {
         let model_config = ModelConfig::new("llama3.1")
             .unwrap()
             .with_max_tokens(Some(4096));
-        let messages = vec![crate::conversation::message::Message::user().with_text("hi")];
+        let messages =
+            vec![goose_providers::conversation::message::Message::user().with_text("hi")];
 
         let payload = create_request(
             &model_config,
@@ -597,7 +598,8 @@ mod tests {
         let model_config = ModelConfig::new("llama3.1")
             .unwrap()
             .with_max_tokens(Some(4096));
-        let messages = vec![crate::conversation::message::Message::user().with_text("hi")];
+        let messages =
+            vec![goose_providers::conversation::message::Message::user().with_text("hi")];
 
         let mut payload = create_request(
             &model_config,
@@ -642,7 +644,8 @@ mod tests {
         let model_config = ModelConfig::new("llama3.1")
             .unwrap()
             .with_max_tokens(Some(4096));
-        let messages = vec![crate::conversation::message::Message::user().with_text("hi")];
+        let messages =
+            vec![goose_providers::conversation::message::Message::user().with_text("hi")];
 
         let mut payload = create_request(
             &model_config,

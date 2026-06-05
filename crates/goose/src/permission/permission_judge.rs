@@ -1,8 +1,8 @@
-use crate::conversation::message::{Message, MessageContent, ToolRequest};
 use crate::conversation::Conversation;
 use crate::prompt_template::render_template;
 use crate::providers::base::Provider;
 use chrono::Utc;
+use goose_providers::conversation::message::{Message, MessageContent, ToolRequest};
 use indoc::indoc;
 use rmcp::model::{Tool, ToolAnnotations};
 use rmcp::object;

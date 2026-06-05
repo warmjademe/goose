@@ -1,8 +1,8 @@
-use crate::model::ModelConfig;
 use crate::providers::base::Usage;
 use crate::providers::errors::ProviderError;
 use crate::providers::utils::{is_valid_function_name, sanitize_function_name};
 use anyhow::Result;
+use goose_providers::model::ModelConfig;
 use rmcp::model::{
     object, AnnotateAble, CallToolRequestParams, ErrorCode, ErrorData, RawContent, Role, Tool,
 };
@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::borrow::Cow;
 use uuid::Uuid;
 
-use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
+use goose_providers::conversation::message::{Message, MessageContent, ProviderMetadata};
 use serde_json::{json, Map, Value};
 use std::ops::Deref;
 
@@ -542,7 +542,7 @@ fn get_thinking_config(model_config: &ModelConfig) -> Option<ThinkingConfig> {
     }
 
     if is_gemini_3 {
-        use crate::model::ThinkingEffort;
+        use goose_providers::model::ThinkingEffort;
         let effort = model_config
             .thinking_effort()
             .unwrap_or(ThinkingEffort::Off);
@@ -622,7 +622,7 @@ pub fn create_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::Message;
+    use goose_providers::conversation::message::Message;
     use rmcp::model::{CallToolRequestParams, CallToolResult};
     use rmcp::{model::Content, object};
     use serde_json::json;
@@ -1372,7 +1372,7 @@ data: [DONE]"#;
 
     #[test]
     fn test_get_thinking_config() {
-        use crate::model::ModelConfig;
+        use goose_providers::model::ModelConfig;
 
         // Test 1: Gemini 3 model with low thinking effort
         let mut params = std::collections::HashMap::new();

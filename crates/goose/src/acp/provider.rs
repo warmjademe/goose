@@ -32,13 +32,15 @@ use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt 
 use crate::acp::{map_permission_response, PermissionDecision};
 use crate::config::{ExtensionConfig, GooseMode};
 use crate::context_mgmt::format_message_for_compacting;
-use crate::conversation::message::{Message, MessageContent, TOOL_META_EXTERNAL_DISPATCH_KEY};
-use crate::model::ModelConfig;
 use crate::permission::permission_confirmation::PrincipalType;
 use crate::permission::{Permission, PermissionConfirmation};
 use crate::providers::base::{MessageStream, PermissionRouting, Provider, ProviderUsage, Usage};
 use crate::providers::errors::ProviderError;
 use crate::subprocess::configure_subprocess;
+use goose_providers::conversation::message::{
+    Message, MessageContent, TOOL_META_EXTERNAL_DISPATCH_KEY,
+};
+use goose_providers::model::ModelConfig;
 
 /// Sentinel: resolved to the actual model name during connect().
 pub const ACP_CURRENT_MODEL: &str = "current";
@@ -1660,7 +1662,7 @@ mod tests {
         let provider = test_provider();
         assert_eq!(
             provider.get_model_config().context_limit(),
-            crate::model::DEFAULT_CONTEXT_LIMIT
+            goose_providers::model::DEFAULT_CONTEXT_LIMIT
         );
 
         provider.context_size.store(200_000, Ordering::Relaxed);

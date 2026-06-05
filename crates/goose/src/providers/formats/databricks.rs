@@ -1,5 +1,3 @@
-use crate::conversation::message::{Message, MessageContent};
-use crate::model::ModelConfig;
 use crate::providers::formats::anthropic::{
     thinking_budget_tokens, thinking_effort, thinking_type, ThinkingType,
 };
@@ -9,6 +7,8 @@ use crate::providers::utils::{
     safely_parse_json, sanitize_function_name, ImageFormat,
 };
 use anyhow::{anyhow, Error};
+use goose_providers::conversation::message::{Message, MessageContent};
+use goose_providers::model::ModelConfig;
 use rmcp::model::{
     object, AnnotateAble, CallToolRequestParams, Content, ErrorCode, ErrorData, RawContent,
     ResourceContents, Role, Tool,
@@ -41,7 +41,7 @@ fn format_text_content(text: &str, image_format: &ImageFormat) -> (Vec<Value>, b
 }
 
 fn format_tool_response(
-    response: &crate::conversation::message::ToolResponse,
+    response: &goose_providers::conversation::message::ToolResponse,
     image_format: &ImageFormat,
 ) -> Vec<DatabricksMessage> {
     let mut result = Vec::new();
@@ -683,7 +683,7 @@ pub fn create_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::Message;
+    use goose_providers::conversation::message::Message;
     use rmcp::model::CallToolResult;
     use rmcp::object;
     use serde_json::json;

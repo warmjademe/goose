@@ -6,10 +6,10 @@ use std::sync::OnceLock;
 use crate::agents::types::SharedProvider;
 use crate::config::paths::Paths;
 use crate::config::GooseMode;
-use crate::conversation::message::{Message, MessageContent, ToolRequest};
 use crate::conversation::Conversation;
 use crate::tool_inspection::{InspectionAction, InspectionResult, ToolInspector};
 use crate::utils::safe_truncate;
+use goose_providers::conversation::message::{Message, MessageContent, ToolRequest};
 
 const DEFAULT_TOOLS: &[&str] = &["shell", "computercontroller__automation_script"];
 

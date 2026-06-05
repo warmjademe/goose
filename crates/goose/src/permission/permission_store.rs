@@ -1,8 +1,8 @@
 use crate::config::paths::Paths;
-use crate::conversation::message::ToolRequest;
 use anyhow::Result;
 use blake3::Hasher;
 use chrono::Utc;
+use goose_providers::conversation::message::ToolRequest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;

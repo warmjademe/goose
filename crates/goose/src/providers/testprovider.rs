@@ -11,10 +11,10 @@ use std::sync::{Arc, Mutex};
 use super::base::stream_from_single_message;
 use super::base::{MessageStream, Provider, ProviderDef, ProviderMetadata, ProviderUsage};
 use super::errors::ProviderError;
-use crate::conversation::message::{Message, ToolResponse};
-use crate::model::ModelConfig;
 use crate::utils::bytes_to_hex;
 use futures::future::BoxFuture;
+use goose_providers::conversation::message::{Message, ToolResponse};
+use goose_providers::model::ModelConfig;
 use rmcp::model::{CallToolResult, Tool};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +75,7 @@ impl TestProvider {
     }
 
     fn hash_input(messages: &[Message]) -> String {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
 
         // Strip internal metadata (e.g. tool_meta/_meta) from content before hashing.
         // This metadata is used for internal routing (like goose_extension ownership)
@@ -224,9 +224,9 @@ impl Provider for TestProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::{Message, MessageContent};
     use crate::providers::base::{ProviderUsage, Usage};
     use chrono::Utc;
+    use goose_providers::conversation::message::{Message, MessageContent};
     use rmcp::model::{RawTextContent, Role, TextContent};
     use std::env;
 

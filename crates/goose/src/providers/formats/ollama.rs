@@ -9,12 +9,12 @@
 //! - qwen3-coder
 //! - qwen3-coder-32b
 
-use crate::conversation::message::{Message, MessageContent};
 use crate::providers::base::ProviderUsage;
 use crate::providers::utils::is_valid_function_name;
 use async_stream::try_stream;
 use chrono;
 use futures::Stream;
+use goose_providers::conversation::message::{Message, MessageContent};
 use regex::Regex;
 use rmcp::model::{object, CallToolRequestParams, ErrorCode, ErrorData, Role};
 use serde_json::Value;

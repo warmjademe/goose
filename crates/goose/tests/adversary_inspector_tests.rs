@@ -1,7 +1,7 @@
 use goose::config::GooseMode;
-use goose::conversation::message::{Message, MessageContent, ToolRequest};
 use goose::security::adversary_inspector::AdversaryInspector;
 use goose::tool_inspection::ToolInspector;
+use goose_providers::conversation::message::{Message, MessageContent, ToolRequest};
 use rmcp::model::CallToolRequestParams;
 use rmcp::object;
 use std::sync::Arc;

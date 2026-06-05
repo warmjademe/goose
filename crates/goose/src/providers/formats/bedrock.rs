@@ -15,7 +15,7 @@ use rmcp::model::{
 use serde_json::Value;
 
 use super::super::base::Usage;
-use crate::conversation::message::{Message, MessageContent};
+use goose_providers::conversation::message::{Message, MessageContent};
 
 pub fn to_bedrock_message_with_caching(
     message: &Message,

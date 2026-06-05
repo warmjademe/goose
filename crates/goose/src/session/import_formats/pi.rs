@@ -14,8 +14,8 @@ use chrono::{DateTime, Utc};
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ErrorCode, ErrorData};
 use serde_json::{json, Map, Value};
 
-use crate::conversation::message::Message;
 use crate::conversation::Conversation;
+use goose_providers::conversation::message::Message;
 
 pub fn convert(content: &str) -> Result<String> {
     let mut lines = content.lines().filter(|l| !l.trim().is_empty());
@@ -324,7 +324,7 @@ fn build_tool_result(content: Option<&Value>, is_error: bool) -> Result<CallTool
 }
 
 fn extract_first_text(msg: &Message) -> Option<String> {
-    use crate::conversation::message::MessageContent;
+    use goose_providers::conversation::message::MessageContent;
     for c in &msg.content {
         if let MessageContent::Text(t) = c {
             return Some(t.text.clone());

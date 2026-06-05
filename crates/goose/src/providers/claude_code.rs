@@ -25,11 +25,11 @@ use crate::config::base::ClaudeCodeCommand;
 use crate::config::paths::Paths;
 use crate::config::search_path::SearchPaths;
 use crate::config::{Config, ExtensionConfig, GooseMode};
-use crate::conversation::message::{Message, MessageContent};
-use crate::model::ModelConfig;
 use crate::permission::permission_confirmation::PrincipalType;
 use crate::permission::{Permission, PermissionConfirmation};
 use crate::subprocess::configure_subprocess;
+use goose_providers::conversation::message::{Message, MessageContent};
+use goose_providers::model::ModelConfig;
 
 use super::cli_common::{error_from_event, extract_usage_tokens};
 
@@ -1370,7 +1370,7 @@ mod tests {
             .find_map(|c| c.as_action_required())
             .unwrap();
         match &ar.data {
-            crate::conversation::message::ActionRequiredData::ToolConfirmation {
+            goose_providers::conversation::message::ActionRequiredData::ToolConfirmation {
                 id,
                 tool_name,
                 ..

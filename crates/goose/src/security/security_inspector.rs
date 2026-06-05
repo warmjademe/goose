@@ -2,9 +2,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::config::GooseMode;
-use crate::conversation::message::{Message, ToolRequest};
 use crate::security::{SecurityManager, SecurityResult};
 use crate::tool_inspection::{InspectionAction, InspectionResult, ToolInspector};
+use goose_providers::conversation::message::{Message, ToolRequest};
 
 /// Security inspector that uses pattern matching to detect malicious tool calls
 pub struct SecurityInspector {
@@ -96,7 +96,7 @@ impl Default for SecurityInspector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::ToolRequest;
+    use goose_providers::conversation::message::ToolRequest;
     use rmcp::model::CallToolRequestParams;
     use rmcp::object;
 

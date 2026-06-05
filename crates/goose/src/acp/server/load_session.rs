@@ -29,8 +29,10 @@ fn send_replay_content_chunk(
 fn replay_conversation_to_client(
     cx: &ConnectionTo<Client>,
     session: &Session,
-) -> Result<HashMap<String, crate::conversation::message::ToolRequest>, agent_client_protocol::Error>
-{
+) -> Result<
+    HashMap<String, goose_providers::conversation::message::ToolRequest>,
+    agent_client_protocol::Error,
+> {
     let session_id = SessionId::new(session.id.clone());
     let sid = sid_short(session_id.0.as_ref());
 
@@ -47,7 +49,7 @@ fn replay_conversation_to_client(
     );
 
     let mut replay_tool_requests =
-        HashMap::<String, crate::conversation::message::ToolRequest>::new();
+        HashMap::<String, goose_providers::conversation::message::ToolRequest>::new();
     let submitted_elicitation_ids = collect_submitted_elicitation_ids(&messages);
 
     for message in &messages {

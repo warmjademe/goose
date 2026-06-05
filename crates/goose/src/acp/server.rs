@@ -21,10 +21,6 @@ use crate::config::extensions::get_enabled_extensions_with_config;
 use crate::config::paths::Paths;
 use crate::config::permission::PermissionManager;
 use crate::config::{Config, GooseMode};
-use crate::conversation::message::{
-    ActionRequiredData, Message, MessageContent, SystemNotificationContent, SystemNotificationType,
-    ToolRequest,
-};
 use crate::execution::manager::{AgentManager, AgentManagerGetResult, RuntimeContext};
 use crate::mcp_utils::ToolResult;
 use crate::permission::permission_confirmation::PrincipalType;
@@ -68,6 +64,10 @@ use fs_err as fs;
 use futures::future::BoxFuture;
 use futures::stream::{self, StreamExt};
 use futures::FutureExt;
+use goose_providers::conversation::message::{
+    ActionRequiredData, Message, MessageContent, SystemNotificationContent, SystemNotificationType,
+    ToolRequest,
+};
 use rmcp::model::{
     AnnotateAble, CallToolResult, RawContent, RawTextContent, ResourceContents, Role,
 };
@@ -101,7 +101,7 @@ mod tools;
 pub type AcpProviderFactory = Arc<
     dyn Fn(
             String,
-            crate::model::ModelConfig,
+            goose_providers::model::ModelConfig,
             Vec<ExtensionConfig>,
             Option<PathBuf>,
         ) -> BoxFuture<'static, Result<Arc<dyn Provider>>>
@@ -162,7 +162,7 @@ const PROVIDER_CONFIG_STATUS_CHECK_CONCURRENCY: usize = 16;
 /// below is keyed by session ID.
 struct GooseAcpSession {
     agent: Arc<Agent>,
-    tool_requests: HashMap<String, crate::conversation::message::ToolRequest>,
+    tool_requests: HashMap<String, goose_providers::conversation::message::ToolRequest>,
     /// For each tool_call_id that belongs to a multi-tool chain (run of
     /// consecutive ToolRequest blocks within one assistant message), the chain
     /// it belongs to. Populated when the assistant message is processed.
@@ -527,7 +527,7 @@ fn push_or_replace_extension(extensions: &mut Vec<ExtensionConfig>, extension: E
 
 fn resolve_default_provider_model_config(
     config: &Config,
-) -> Result<(String, crate::model::ModelConfig), agent_client_protocol::Error> {
+) -> Result<(String, goose_providers::model::ModelConfig), agent_client_protocol::Error> {
     let resolved_provider = config.get_goose_provider().map_err(|error| {
         agent_client_protocol::Error::internal_error()
             .data(format!("Failed to resolve provider: {}", error))
@@ -536,7 +536,7 @@ fn resolve_default_provider_model_config(
         agent_client_protocol::Error::internal_error()
             .data(format!("Failed to resolve model: {}", error))
     })?;
-    let resolved_model_config = crate::model::ModelConfig::new(&resolved_model)
+    let resolved_model_config = goose_providers::model::ModelConfig::new(&resolved_model)
         .map(|model_config| model_config.with_canonical_limits(&resolved_provider))
         .map_err(|error| {
             agent_client_protocol::Error::internal_error()
@@ -547,14 +547,14 @@ fn resolve_default_provider_model_config(
 
 async fn resolve_provider_default_model_config(
     provider_name: &str,
-) -> Result<crate::model::ModelConfig, agent_client_protocol::Error> {
+) -> Result<goose_providers::model::ModelConfig, agent_client_protocol::Error> {
     let entry = crate::providers::get_from_registry(provider_name)
         .await
         .map_err(|error| {
             agent_client_protocol::Error::invalid_params()
                 .data(format!("Unknown provider '{}': {}", provider_name, error))
         })?;
-    crate::model::ModelConfig::new(&entry.metadata().default_model)
+    goose_providers::model::ModelConfig::new(&entry.metadata().default_model)
         .map(|model_config| model_config.with_canonical_limits(provider_name))
         .map_err(|error| {
             agent_client_protocol::Error::internal_error()
@@ -574,7 +574,7 @@ fn is_developer_file_tool(tool_name: &str) -> bool {
 }
 
 fn extract_locations_from_meta(
-    tool_response: &crate::conversation::message::ToolResponse,
+    tool_response: &goose_providers::conversation::message::ToolResponse,
 ) -> Option<Vec<ToolCallLocation>> {
     let result = tool_response.tool_result.as_ref().ok()?;
     let meta = result.meta.as_ref()?;
@@ -596,8 +596,8 @@ fn extract_locations_from_meta(
 }
 
 fn extract_tool_locations(
-    tool_request: &crate::conversation::message::ToolRequest,
-    tool_response: &crate::conversation::message::ToolResponse,
+    tool_request: &goose_providers::conversation::message::ToolRequest,
+    tool_response: &goose_providers::conversation::message::ToolResponse,
 ) -> Vec<ToolCallLocation> {
     let mut locations = Vec::new();
 
@@ -918,10 +918,10 @@ fn builtin_to_extension_config(name: &str) -> ExtensionConfig {
 }
 
 fn with_preserved_session_request_params(
-    mut model_config: crate::model::ModelConfig,
-    current_model_config: Option<&crate::model::ModelConfig>,
+    mut model_config: goose_providers::model::ModelConfig,
+    current_model_config: Option<&goose_providers::model::ModelConfig>,
     request_params: Option<HashMap<String, serde_json::Value>>,
-) -> crate::model::ModelConfig {
+) -> goose_providers::model::ModelConfig {
     let has_model_effort = model_config
         .request_params
         .as_ref()
@@ -1050,7 +1050,7 @@ impl GooseAcpAgent {
     async fn create_provider(
         &self,
         provider_name: &str,
-        model_config: crate::model::ModelConfig,
+        model_config: goose_providers::model::ModelConfig,
         extensions: Vec<ExtensionConfig>,
         working_dir: Option<PathBuf>,
     ) -> Result<Arc<dyn Provider>> {
@@ -1488,7 +1488,7 @@ impl GooseAcpAgent {
 
     async fn handle_tool_request(
         &self,
-        tool_request: &crate::conversation::message::ToolRequest,
+        tool_request: &goose_providers::conversation::message::ToolRequest,
         session_id: &SessionId,
         session_id_for_persist: &str,
         message_id: Option<&str>,
@@ -1628,7 +1628,7 @@ impl GooseAcpAgent {
                 if from_llm {
                     if let Some(msg_id) = message_id_for_persist {
                         let patch = serde_json::json!({
-                            crate::conversation::message::TOOL_META_TITLE_KEY: title,
+                            goose_providers::conversation::message::TOOL_META_TITLE_KEY: title,
                         });
                         if let Err(e) = session_manager
                             .update_tool_request_meta(
@@ -1657,7 +1657,7 @@ impl GooseAcpAgent {
 
     async fn handle_tool_response(
         &self,
-        tool_response: &crate::conversation::message::ToolResponse,
+        tool_response: &goose_providers::conversation::message::ToolResponse,
         session_id: &SessionId,
         session_id_str: &str,
         message_id: Option<&str>,
@@ -1879,7 +1879,7 @@ impl GooseAcpAgent {
 
             let count = chain_for_task.ids.len();
             let patch = serde_json::json!({
-                crate::conversation::message::TOOL_META_CHAIN_SUMMARY_KEY: {
+                goose_providers::conversation::message::TOOL_META_CHAIN_SUMMARY_KEY: {
                     "summary": &summary,
                     "count": count,
                 },
@@ -2109,7 +2109,7 @@ fn message_update_meta(message_id: Option<&str>, created: i64) -> Meta {
 }
 
 fn extract_tool_call_update_meta(
-    tool_response: &crate::conversation::message::ToolResponse,
+    tool_response: &goose_providers::conversation::message::ToolResponse,
 ) -> Option<Meta> {
     let tool_result = tool_response.tool_result.as_ref().ok()?;
     let goose_meta = tool_result
@@ -2619,7 +2619,7 @@ impl GooseAcpAgent {
         let current_model_config = current_provider.get_model_config();
         let extensions =
             EnabledExtensionsState::for_session(&self.session_manager, session_id, config).await;
-        let model_config = crate::model::ModelConfig::new(model_id)
+        let model_config = goose_providers::model::ModelConfig::new(model_id)
             .invalid_params_err_ctx("Invalid model config")?
             .with_canonical_limits(&provider_name);
         let model_config =
@@ -2752,7 +2752,7 @@ impl GooseAcpAgent {
             current_model
         };
         let model = model_name.unwrap_or(&default_model);
-        let mut model_config = crate::model::ModelConfig::new(model)
+        let mut model_config = goose_providers::model::ModelConfig::new(model)
             .invalid_params_err_ctx("Invalid model config")?
             .with_canonical_limits(&resolved_provider_name)
             .with_context_limit(context_limit);
@@ -2918,11 +2918,11 @@ pub async fn run(builtins: Vec<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::{ToolRequest, ToolResponse};
     use agent_client_protocol::schema::{
         EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
         PermissionOptionId, ResourceLink, SelectedPermissionOutcome,
     };
+    use goose_providers::conversation::message::{ToolRequest, ToolResponse};
     use rmcp::model::{CallToolRequestParams, Content as RmcpContent};
     use std::io::Write;
     use std::path::PathBuf;
@@ -3219,7 +3219,7 @@ print(\"hello, world\")
             tool_call: Ok(CallToolRequestParams::new("developer__shell")),
             metadata: None,
             tool_meta: Some(serde_json::json!({
-                crate::conversation::message::TOOL_META_CHAIN_SUMMARY_KEY: {
+                goose_providers::conversation::message::TOOL_META_CHAIN_SUMMARY_KEY: {
                     "summary": "applied dark mode polish",
                     "count": 3,
                 },
@@ -3701,7 +3701,7 @@ print(\"hello, world\")
     fn test_build_usage_update_clamps_negative_used_to_zero() {
         let mut session = make_session_with_usage(Some(-7), Some(0), Some(0), None, None, None);
         session.model_config = Some(
-            crate::model::ModelConfig::new("test-model")
+            goose_providers::model::ModelConfig::new("test-model")
                 .unwrap()
                 .with_context_limit(Some(258_000)),
         );

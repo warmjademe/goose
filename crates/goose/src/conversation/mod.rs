@@ -1,12 +1,10 @@
-use crate::conversation::message::{Message, MessageContent, MessageMetadata};
 use crate::mcp_utils::extract_text_from_resource;
+use goose_providers::conversation::message::{Message, MessageContent, MessageMetadata};
 use rmcp::model::{Content, Role};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
 use utoipa::ToSchema;
-
-pub mod message;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub struct Conversation(Vec<Message>);
@@ -580,8 +578,8 @@ pub fn debug_conversation_fix(
 
 #[cfg(test)]
 mod tests {
-    use crate::conversation::message::Message;
     use crate::conversation::{debug_conversation_fix, fix_conversation, Conversation};
+    use goose_providers::conversation::message::Message;
     use rmcp::model::{CallToolRequestParams, Role};
     use rmcp::object;
 
@@ -823,7 +821,7 @@ mod tests {
 
     #[test]
     fn test_merge_text_content_items() {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
         use rmcp::model::{AnnotateAble, RawTextContent};
 
         let mut message = Message::assistant().with_text("Hello");
@@ -866,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_merge_text_content_items_with_mixed_content() {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
         use rmcp::model::{AnnotateAble, RawTextContent};
 
         let mut image_message = Message::assistant().with_text("Look at");
@@ -1203,13 +1201,13 @@ mod tests {
                 m.content.iter().any(|c| {
                     matches!(
                         c,
-                        crate::conversation::message::MessageContent::ToolResponse(_)
+                        goose_providers::conversation::message::MessageContent::ToolResponse(_)
                     )
                 })
             })
             .expect("Should have a tool response message");
 
-        if let crate::conversation::message::MessageContent::ToolResponse(resp) =
+        if let goose_providers::conversation::message::MessageContent::ToolResponse(resp) =
             &tool_response_msg.content[0]
         {
             if let Ok(result) = &resp.tool_result {
@@ -1290,7 +1288,7 @@ mod tests {
 
     #[test]
     fn test_push_coalesces_thinking_deltas() {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
 
         let mut conv = Conversation::empty();
         for fragment in ["I ", "should ", "think ", "about ", "this."] {
@@ -1315,7 +1313,7 @@ mod tests {
 
     #[test]
     fn test_push_thinking_adopts_signature_on_closing_delta() {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
 
         let mut conv = Conversation::empty();
         // Streamed shape for one signed block: text deltas accumulate while
@@ -1344,7 +1342,7 @@ mod tests {
 
     #[test]
     fn test_push_unsigned_thinking_after_signed_starts_new_block() {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
 
         let mut conv = Conversation::empty();
         conv.push(
@@ -1383,7 +1381,7 @@ mod tests {
 
     #[test]
     fn test_push_keeps_distinct_signed_thinking_blocks_separate() {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
 
         let mut conv = Conversation::empty();
         conv.push(
@@ -1417,7 +1415,7 @@ mod tests {
 
     #[test]
     fn test_push_does_not_coalesce_multi_block_thinking_message() {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
 
         let mut conv = Conversation::empty();
         conv.push(

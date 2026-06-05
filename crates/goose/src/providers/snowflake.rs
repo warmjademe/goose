@@ -13,10 +13,10 @@ use super::openai_compatible::{map_http_error_to_provider_error, sanitize_url};
 use super::retry::ProviderRetry;
 use super::utils::{get_model, ImageFormat, RequestLog};
 use crate::config::ConfigError;
-use crate::conversation::message::Message;
+use goose_providers::conversation::message::Message;
 
-use crate::model::ModelConfig;
 use futures::future::BoxFuture;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 
 const SNOWFLAKE_PROVIDER_NAME: &str = "snowflake";

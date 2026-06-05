@@ -1,8 +1,8 @@
 use super::{anthropic, google};
-use crate::conversation::message::Message;
-use crate::model::ModelConfig;
 use crate::providers::base::Usage;
 use anyhow::{Context, Result};
+use goose_providers::conversation::message::Message;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 use serde_json::Value;
 

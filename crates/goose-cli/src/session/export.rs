@@ -1,7 +1,7 @@
-use goose::conversation::message::{
+use goose::utils::safe_truncate;
+use goose_providers::conversation::message::{
     ActionRequiredData, Message, MessageContent, ToolRequest, ToolResponse,
 };
-use goose::utils::safe_truncate;
 use rmcp::model::{RawContent, ResourceContents, Role};
 use serde_json::Value;
 
@@ -407,7 +407,7 @@ pub fn message_to_markdown(message: &Message, export_all_content: bool) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use goose::conversation::message::{Message, ToolRequest, ToolResponse};
+    use goose_providers::conversation::message::{Message, ToolRequest, ToolResponse};
     use rmcp::model::{CallToolRequestParams, Content, RawTextContent, TextContent};
     use rmcp::object;
     use serde_json::json;

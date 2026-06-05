@@ -56,9 +56,9 @@ impl From<ToolResult<rmcp::model::CallToolResult>> for ToolCallResult {
 
 use super::agent::{tool_stream, ToolStream};
 use crate::agents::Agent;
-use crate::conversation::message::{Message, ToolRequest};
 use crate::session::Session;
 use crate::tool_inspection::get_security_finding_id_from_results;
+use goose_providers::conversation::message::{Message, ToolRequest};
 
 pub const DECLINED_RESPONSE: &str = "The user has declined to run this tool. \
     DO NOT attempt to call this tool again. \

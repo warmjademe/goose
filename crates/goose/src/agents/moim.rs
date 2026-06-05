@@ -1,6 +1,6 @@
 use crate::agents::extension_manager::ExtensionManager;
-use crate::conversation::message::Message;
 use crate::conversation::{fix_conversation, Conversation};
+use goose_providers::conversation::message::Message;
 use rmcp::model::Role;
 use std::path::Path;
 

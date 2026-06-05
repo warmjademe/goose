@@ -33,11 +33,11 @@ use super::retry::ProviderRetry;
 use super::utils::{get_model, is_openai_responses_model, ImageFormat, RequestLog};
 
 use crate::config::{Config, ConfigError};
-use crate::conversation::message::{Message, MessageContent};
+use goose_providers::conversation::message::{Message, MessageContent};
 
-use crate::model::ModelConfig;
 use crate::providers::base::{ConfigKey, MessageStream};
 use futures::future::BoxFuture;
+use goose_providers::model::ModelConfig;
 use rmcp::model::{RawContent, Tool};
 use std::ops::Deref;
 
@@ -749,7 +749,7 @@ mod tests {
 
     #[test]
     fn detects_images_in_messages() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         let messages_with_image = vec![Message::user()
             .with_text("describe this")
@@ -766,7 +766,7 @@ mod tests {
 
     #[test]
     fn detects_images_in_tool_responses() {
-        use crate::conversation::message::{Message, MessageContent};
+        use goose_providers::conversation::message::{Message, MessageContent};
         use rmcp::model::{CallToolResult, Content};
 
         let image_content = Content::image("aW1hZ2VkYXRh".to_string(), "image/png".to_string());

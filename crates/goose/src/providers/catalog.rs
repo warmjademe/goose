@@ -2,10 +2,8 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::{
-    base::{ConfigKey, ProviderMetadata},
-    canonical::CanonicalModelRegistry,
-};
+use super::base::{ConfigKey, ProviderMetadata};
+use goose_providers::canonical::CanonicalModelRegistry;
 
 const PROVIDER_METADATA_JSON: &str =
     include_str!("../../../goose-providers/src/canonical/data/provider_metadata.json");

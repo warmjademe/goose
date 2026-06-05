@@ -1,8 +1,8 @@
-use crate::conversation::message::MessageMetadata;
 use crate::conversation::Conversation;
 use crate::session::Session;
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
+use goose_providers::conversation::message::MessageMetadata;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};

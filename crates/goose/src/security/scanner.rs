@@ -1,10 +1,10 @@
 use crate::config::Config;
-use crate::conversation::message::Message;
 use crate::security::classification_client::ClassificationClient;
 use crate::security::patterns::{PatternMatch, PatternMatcher};
 use crate::utils::safe_truncate;
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
+use goose_providers::conversation::message::Message;
 use rmcp::model::CallToolRequestParams;
 
 const USER_SCAN_LIMIT: usize = 10;
@@ -347,7 +347,7 @@ impl PromptInjectionScanner {
                 m.content
                     .iter()
                     .filter_map(|c| match c {
-                        crate::conversation::message::MessageContent::Text(t) => {
+                        goose_providers::conversation::message::MessageContent::Text(t) => {
                             Some(t.text.clone())
                         }
                         _ => None,

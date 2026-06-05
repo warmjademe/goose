@@ -1,7 +1,7 @@
-use crate::conversation::message::MessageContent;
 use crate::session::session_manager::SessionType;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use goose_providers::conversation::message::MessageContent;
 use serde::Serialize;
 use sqlx::{Pool, Sqlite};
 use std::collections::HashMap;

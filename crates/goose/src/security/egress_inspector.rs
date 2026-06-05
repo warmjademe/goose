@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use crate::config::GooseMode;
-use crate::conversation::message::{Message, ToolRequest};
 use crate::tool_inspection::{InspectionAction, InspectionResult, ToolInspector};
+use goose_providers::conversation::message::{Message, ToolRequest};
 
 pub struct EgressInspector;
 

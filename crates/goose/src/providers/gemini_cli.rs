@@ -17,12 +17,12 @@ use super::utils::filter_extensions_from_system_prompt;
 use crate::config::base::GeminiCliCommand;
 use crate::config::search_path::SearchPaths;
 use crate::config::Config;
-use crate::conversation::message::{Message, MessageContent};
-use crate::model::ModelConfig;
 use crate::providers::base::ConfigKey;
 use crate::subprocess::configure_subprocess;
 use async_stream::try_stream;
 use futures::future::BoxFuture;
+use goose_providers::conversation::message::{Message, MessageContent};
+use goose_providers::model::ModelConfig;
 use rmcp::model::Role;
 use rmcp::model::Tool;
 

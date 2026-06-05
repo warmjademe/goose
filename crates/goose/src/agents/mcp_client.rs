@@ -303,13 +303,13 @@ impl ClientHandler for GooseClient {
         // Prefer explicit MCP metadata, then the active request scope.
         let session_id = self.resolve_session_id(&context.extensions).await;
 
-        let provider_ready_messages: Vec<crate::conversation::message::Message> = params
+        let provider_ready_messages: Vec<goose_providers::conversation::message::Message> = params
             .messages
             .iter()
             .map(|msg| {
                 let base = match msg.role {
-                    Role::User => crate::conversation::message::Message::user(),
-                    Role::Assistant => crate::conversation::message::Message::assistant(),
+                    Role::User => goose_providers::conversation::message::Message::user(),
+                    Role::Assistant => goose_providers::conversation::message::Message::assistant(),
                 };
 
                 match msg.content.first().and_then(|c| c.as_text()) {
@@ -347,10 +347,10 @@ impl ClientHandler for GooseClient {
                 Role::Assistant,
                 if let Some(content) = response.content.first() {
                     match content {
-                        crate::conversation::message::MessageContent::Text(text) => {
+                        goose_providers::conversation::message::MessageContent::Text(text) => {
                             SamplingMessageContent::text(&text.text)
                         }
-                        crate::conversation::message::MessageContent::Image(img) => {
+                        goose_providers::conversation::message::MessageContent::Image(img) => {
                             SamplingMessageContent::Image(rmcp::model::RawImageContent {
                                 data: img.data.clone(),
                                 mime_type: img.mime_type.clone(),

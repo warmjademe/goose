@@ -1,9 +1,9 @@
-use crate::conversation::message::{Message, MessageContent};
 use crate::mcp_utils::extract_text_from_resource;
-use crate::model::ModelConfig;
 use crate::providers::base::Usage;
 use crate::providers::errors::ProviderError;
 use anyhow::{anyhow, Result};
+use goose_providers::conversation::message::{Message, MessageContent};
+use goose_providers::model::ModelConfig;
 use rmcp::model::{object, CallToolRequestParams, Role, Tool};
 use rmcp::object;
 use serde_json::{json, Value};
@@ -371,7 +371,7 @@ pub fn create_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::Message;
+    use goose_providers::conversation::message::Message;
     use rmcp::object;
     use serde_json::json;
 
@@ -559,8 +559,8 @@ data: {"id":"a9537c2c-2017-4906-9817-2456168d89fa","model":"claude-sonnet-4-2025
 
     #[test]
     fn test_create_request_format() -> Result<()> {
-        use crate::conversation::message::Message;
-        use crate::model::ModelConfig;
+        use goose_providers::conversation::message::Message;
+        use goose_providers::model::ModelConfig;
 
         let model_config =
             ModelConfig::new_or_fail("claude-4-sonnet").with_canonical_limits("snowflake");
@@ -669,8 +669,8 @@ data: {"id":"a9537c2c-2017-4906-9817-2456168d89fa","model":"claude-sonnet-4-2025
 
     #[test]
     fn test_create_request_excludes_tools_for_description() -> Result<()> {
-        use crate::conversation::message::Message;
-        use crate::model::ModelConfig;
+        use goose_providers::conversation::message::Message;
+        use goose_providers::model::ModelConfig;
 
         let model_config =
             ModelConfig::new_or_fail("claude-4-sonnet").with_canonical_limits("snowflake");
@@ -692,7 +692,7 @@ data: {"id":"a9537c2c-2017-4906-9817-2456168d89fa","model":"claude-sonnet-4-2025
 
     #[test]
     fn test_message_formatting_skips_tool_requests() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         // Create a conversation with text, tool requests, and tool responses
         let tool_call = CallToolRequestParams::new("calculator")

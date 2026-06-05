@@ -1,5 +1,3 @@
-use crate::conversation::message::{ActionRequiredData, MessageMetadata};
-use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::{merge_consecutive_messages, Conversation};
 use crate::prompt_template::render_template;
 #[cfg(test)]
@@ -8,6 +6,8 @@ use crate::providers::base::{Provider, ProviderUsage};
 use crate::providers::errors::ProviderError;
 use crate::{config::Config, token_counter::create_token_counter};
 use anyhow::Result;
+use goose_providers::conversation::message::{ActionRequiredData, MessageMetadata};
+use goose_providers::conversation::message::{Message, MessageContent};
 use indoc::indoc;
 use rmcp::model::Role;
 use serde::Serialize;

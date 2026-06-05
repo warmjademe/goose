@@ -3,9 +3,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 use crate::config::GooseMode;
-use crate::conversation::message::{Message, ToolRequest};
 use crate::permission::permission_inspector::PermissionInspector;
 use crate::permission::permission_judge::PermissionCheckResult;
+use goose_providers::conversation::message::{Message, ToolRequest};
 
 /// Result of inspecting a tool call
 #[derive(Debug, Clone)]
@@ -264,7 +264,7 @@ pub fn get_security_finding_id_from_results(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::ToolRequest;
+    use goose_providers::conversation::message::ToolRequest;
     use rmcp::model::CallToolRequestParams;
     use rmcp::object;
 

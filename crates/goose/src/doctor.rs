@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::agents::platform_extensions::developer;
 use crate::agents::ExtensionConfig;
 use crate::config::Config;
-use crate::conversation::message::Message;
-use crate::model::ModelConfig;
 use crate::providers::base::Provider;
 use crate::providers::{self, errors::ProviderError};
 use crate::session::{
     config_path, latest_llm_log_path, latest_server_log_path, read_capped, read_tail, SystemInfo,
 };
+use goose_providers::conversation::message::Message;
+use goose_providers::model::ModelConfig;
 
 pub async fn run(agent: &crate::agents::Agent, session_id: &str) -> anyhow::Result<Message> {
     if let Some(msg) = ensure_working_provider(agent, session_id).await? {

@@ -13,9 +13,9 @@ use crate::agents::types::{
     RetryConfig, SuccessCheck, DEFAULT_ON_FAILURE_TIMEOUT_SECONDS, DEFAULT_RETRY_TIMEOUT_SECONDS,
 };
 use crate::config::Config;
-use crate::conversation::message::Message;
 use crate::conversation::Conversation;
 use crate::tool_monitor::RepetitionInspector;
+use goose_providers::conversation::message::Message;
 
 /// Result of a retry logic evaluation
 #[derive(Debug, Clone, PartialEq)]

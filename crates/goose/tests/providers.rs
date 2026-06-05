@@ -4,7 +4,6 @@ use futures::StreamExt;
 use goose::acp::ACP_CURRENT_MODEL;
 use goose::agents::{Agent, AgentConfig, AgentEvent, GoosePlatform, PromptManager, SessionConfig};
 use goose::config::{ExtensionConfig, GooseMode, PermissionManager};
-use goose::conversation::message::{ActionRequiredData, Message, MessageContent};
 use goose::permission::permission_confirmation::PrincipalType;
 use goose::permission::{Permission, PermissionConfirmation};
 use goose::providers::anthropic::ANTHROPIC_DEFAULT_MODEL;
@@ -25,6 +24,7 @@ use goose::providers::sagemaker_tgi::SAGEMAKER_TGI_DEFAULT_MODEL;
 use goose::providers::snowflake::SNOWFLAKE_DEFAULT_MODEL;
 use goose::providers::xai::XAI_DEFAULT_MODEL;
 use goose::session::{SessionManager, SessionType};
+use goose_providers::conversation::message::{ActionRequiredData, Message, MessageContent};
 use goose_test_support::{
     EnforceSessionId, ExpectedSessionId, IgnoreSessionId, McpFixture, FAKE_CODE,
 };
@@ -289,7 +289,7 @@ impl ProviderFixture {
     async fn tool_roundtrip(
         &self,
         prompt: &str,
-        model_config: Option<goose::model::ModelConfig>,
+        model_config: Option<goose_providers::model::ModelConfig>,
     ) -> Result<Message> {
         let tools = self
             .agent
@@ -444,9 +444,9 @@ impl ProviderFixture {
 
     async fn test_image_content_support(&self) -> Result<()> {
         let image_config = match &self.image_model {
-            Some(model) => {
-                Some(goose::model::ModelConfig::new(model)?.with_canonical_limits(&self.name))
-            }
+            Some(model) => Some(
+                goose_providers::model::ModelConfig::new(model)?.with_canonical_limits(&self.name),
+            ),
             None => None,
         };
         let response = self
@@ -467,7 +467,8 @@ impl ProviderFixture {
     async fn test_model_switch(&self) -> Result<()> {
         let default = &self.provider.get_model_config().model_name;
         let alt = self.model_switch_name.as_deref().unwrap();
-        let alt_config = goose::model::ModelConfig::new(alt)?.with_canonical_limits(&self.name);
+        let alt_config =
+            goose_providers::model::ModelConfig::new(alt)?.with_canonical_limits(&self.name);
 
         let message = Message::user().with_text("Just say hello!");
         let (response, _) = self

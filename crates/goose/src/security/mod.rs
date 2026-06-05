@@ -6,9 +6,9 @@ pub mod scanner;
 pub mod security_inspector;
 
 use crate::config::Config;
-use crate::conversation::message::{Message, ToolRequest};
 use crate::permission::permission_judge::PermissionCheckResult;
 use anyhow::Result;
+use goose_providers::conversation::message::{Message, ToolRequest};
 use scanner::PromptInjectionScanner;
 use std::sync::OnceLock;
 use uuid::Uuid;

@@ -6,11 +6,11 @@ use common_tests::fixtures::server::AcpServerConnection;
 use common_tests::fixtures::{run_test, send_custom, Connection, TestConnectionConfig};
 use goose::config::paths::Paths;
 use goose::config::{Config, ConfigError};
-use goose::model::ModelConfig;
 use goose::providers::base::{MessageStream, Provider};
 use goose::providers::errors::ProviderError;
 use goose::providers::inventory::ProviderInventoryService;
 use goose::session::session_manager::SessionStorage;
+use goose_providers::model::ModelConfig;
 use goose_test_support::EnforceSessionId;
 use serial_test::serial;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ impl Provider for MockProvider {
         _model_config: &ModelConfig,
         _session_id: &str,
         _system: &str,
-        _messages: &[goose::conversation::message::Message],
+        _messages: &[goose_providers::conversation::message::Message],
         _tools: &[rmcp::model::Tool],
     ) -> Result<MessageStream, ProviderError> {
         unimplemented!()

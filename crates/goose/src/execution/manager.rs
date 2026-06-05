@@ -608,10 +608,10 @@ mod tests {
         use async_trait::async_trait;
         use rmcp::model::Tool;
 
-        use crate::conversation::message::Message;
-        use crate::model::ModelConfig;
         use crate::providers::base::{MessageStream, Provider, ProviderUsage, Usage};
         use crate::providers::errors::ProviderError;
+        use goose_providers::conversation::message::Message;
+        use goose_providers::model::ModelConfig;
 
         struct FailingProvider;
 

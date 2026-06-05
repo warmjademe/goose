@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use anyhow::{anyhow, Result};
 
 use crate::context_mgmt::compact_messages;
-use crate::conversation::message::Message;
 use crate::slash_commands::{recipe_slash_command, skill_slash_command};
+use goose_providers::conversation::message::Message;
 
 use super::Agent;
 
@@ -426,7 +426,7 @@ fn user_only_assistant_text(text: impl Into<String>) -> Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::MessageContent;
+    use goose_providers::conversation::message::MessageContent;
 
     #[test]
     fn parse_slash_command_splits_on_literal_space() {

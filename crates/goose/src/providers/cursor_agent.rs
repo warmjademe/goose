@@ -15,10 +15,10 @@ use super::errors::ProviderError;
 use super::utils::{filter_extensions_from_system_prompt, RequestLog};
 use crate::config::base::CursorAgentCommand;
 use crate::config::search_path::SearchPaths;
-use crate::conversation::message::{Message, MessageContent};
-use crate::model::ModelConfig;
 use crate::subprocess::configure_subprocess;
 use futures::future::BoxFuture;
+use goose_providers::conversation::message::{Message, MessageContent};
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 
 const CURSOR_AGENT_PROVIDER_NAME: &str = "cursor-agent";

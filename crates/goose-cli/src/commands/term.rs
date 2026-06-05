@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use chrono;
 use goose::config::Config;
-use goose::conversation::message::{Message, MessageContent, MessageMetadata};
 use goose::session::{SessionManager, SessionType};
+use goose_providers::conversation::message::{Message, MessageContent, MessageMetadata};
 use rmcp::model::Role;
 
 use crate::session::{build_session, SessionBuilderConfig};
@@ -345,7 +345,7 @@ pub async fn handle_term_info() -> Result<()> {
         .ok()
         .and_then(|model_name| {
             config.get_goose_provider().ok().and_then(|provider_name| {
-                goose::model::ModelConfig::new(&model_name)
+                goose_providers::model::ModelConfig::new(&model_name)
                     .ok()
                     .map(|c| c.with_canonical_limits(&provider_name))
             })

@@ -16,7 +16,6 @@ use crate::agents::AgentEvent;
 use crate::agents::{Agent, SessionConfig};
 use crate::config::paths::Paths;
 use crate::config::{resolve_extensions_for_new_session, Config};
-use crate::conversation::message::Message;
 use crate::conversation::Conversation;
 #[cfg(feature = "telemetry")]
 use crate::posthog;
@@ -26,6 +25,7 @@ use crate::recipe::Recipe;
 use crate::scheduler_trait::SchedulerTrait;
 use crate::session::session_manager::SessionType;
 use crate::session::{Session, SessionManager};
+use goose_providers::conversation::message::Message;
 
 type RunningTasksMap = HashMap<String, CancellationToken>;
 type JobsMap = HashMap<String, (JobId, ScheduledJob)>;
@@ -834,8 +834,8 @@ async fn execute_job(
     let config = Config::global();
     let provider_name = config.get_goose_provider()?;
     let model_name = config.get_goose_model()?;
-    let model_config =
-        crate::model::ModelConfig::new(&model_name)?.with_canonical_limits(&provider_name);
+    let model_config = goose_providers::model::ModelConfig::new(&model_name)?
+        .with_canonical_limits(&provider_name);
 
     let session = agent
         .config

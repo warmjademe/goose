@@ -1,10 +1,10 @@
-use crate::conversation::message::{Message, MessageContent};
 use crate::mcp_utils::extract_text_from_resource;
-use crate::model::{ModelConfig, ThinkingEffort};
 use crate::providers::base::Usage;
 use crate::providers::errors::ProviderError;
 use crate::providers::utils::{convert_image, ImageFormat};
 use anyhow::{anyhow, Result};
+use goose_providers::conversation::message::{Message, MessageContent};
+use goose_providers::model::{ModelConfig, ThinkingEffort};
 use rmcp::model::{object, CallToolRequestParams, ErrorCode, ErrorData, JsonObject, Role, Tool};
 use rmcp::object as json_object;
 use serde_json::{json, Value};
@@ -924,8 +924,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::Message;
-    use crate::model::ModelConfig;
+    use goose_providers::conversation::message::Message;
+    use goose_providers::model::ModelConfig;
     use rmcp::object;
     use serde_json::json;
 
@@ -1318,7 +1318,7 @@ mod tests {
 
     #[test]
     fn test_tool_error_handling_maintains_pairing() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
         use rmcp::model::{ErrorCode, ErrorData};
 
         let messages = vec![

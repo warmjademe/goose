@@ -1,13 +1,13 @@
 use crate::config::paths::Paths;
 use crate::config::GooseMode;
-use crate::conversation::message::Message;
 use crate::conversation::Conversation;
-use crate::model::ModelConfig;
 use crate::providers::base::{Provider, MSG_COUNT_FOR_SESSION_NAME_GENERATION};
 use crate::recipe::Recipe;
 use crate::session::extension_data::ExtensionData;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use goose_providers::conversation::message::Message;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Role;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -496,8 +496,8 @@ impl SessionManager {
     pub async fn update_message_metadata<F>(id: &str, message_id: &str, f: F) -> Result<()>
     where
         F: FnOnce(
-            crate::conversation::message::MessageMetadata,
-        ) -> crate::conversation::message::MessageMetadata,
+            goose_providers::conversation::message::MessageMetadata,
+        ) -> goose_providers::conversation::message::MessageMetadata,
     {
         Self::instance()
             .storage
@@ -1910,8 +1910,8 @@ impl SessionStorage {
     ) -> Result<()>
     where
         F: FnOnce(
-            crate::conversation::message::MessageMetadata,
-        ) -> crate::conversation::message::MessageMetadata,
+            goose_providers::conversation::message::MessageMetadata,
+        ) -> goose_providers::conversation::message::MessageMetadata,
     {
         let pool = self.pool().await?;
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -1924,7 +1924,7 @@ impl SessionStorage {
         .fetch_one(&mut *tx)
         .await?;
 
-        let current_metadata: crate::conversation::message::MessageMetadata =
+        let current_metadata: goose_providers::conversation::message::MessageMetadata =
             serde_json::from_str(&current_metadata_json)?;
 
         let new_metadata = f(current_metadata);
@@ -1956,7 +1956,7 @@ impl SessionStorage {
         tool_call_id: &str,
         patch: serde_json::Value,
     ) -> Result<()> {
-        use crate::conversation::message::MessageContent;
+        use goose_providers::conversation::message::MessageContent;
 
         let pool = self.pool().await?;
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -2023,7 +2023,7 @@ fn merge_tool_meta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::{Message, MessageContent};
+    use goose_providers::conversation::message::{Message, MessageContent};
     use tempfile::TempDir;
     use test_case::test_case;
 

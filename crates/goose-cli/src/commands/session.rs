@@ -356,7 +356,7 @@ pub async fn handle_diagnostics(session_id: &str, output_path: Option<PathBuf>) 
 }
 
 fn export_session_to_markdown(
-    messages: Vec<goose::conversation::message::Message>,
+    messages: Vec<goose_providers::conversation::message::Message>,
     session_name: &String,
 ) -> String {
     let mut markdown_output = String::new();
@@ -379,7 +379,7 @@ fn export_session_to_markdown(
             && message.content.iter().all(|content| {
                 matches!(
                     content,
-                    goose::conversation::message::MessageContent::ToolResponse(_)
+                    goose_providers::conversation::message::MessageContent::ToolResponse(_)
                 )
             });
 
@@ -413,7 +413,7 @@ fn export_session_to_markdown(
         if message.content.iter().any(|content| {
             matches!(
                 content,
-                goose::conversation::message::MessageContent::ToolRequest(_)
+                goose_providers::conversation::message::MessageContent::ToolRequest(_)
             )
         }) {
             skip_next_if_tool_response = true;

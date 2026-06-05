@@ -17,16 +17,16 @@ use super::openai_compatible::{
 use super::retry::ProviderRetry;
 use super::utils::ImageFormat;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
-use crate::conversation::message::Message;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use goose_providers::conversation::message::Message;
 use reqwest::StatusCode;
 use std::collections::HashMap;
 
-use crate::model::ModelConfig;
 use crate::providers::base::MessageStream;
 use crate::providers::utils::RequestLog;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 
 const OPEN_AI_PROVIDER_NAME: &str = "openai";

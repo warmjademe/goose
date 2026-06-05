@@ -8,7 +8,7 @@ use tokio::time::timeout;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::conversation::message::{Message, MessageContent};
+use goose_providers::conversation::message::{Message, MessageContent};
 
 struct PendingRequest {
     response_tx: Option<tokio::sync::oneshot::Sender<Value>>,

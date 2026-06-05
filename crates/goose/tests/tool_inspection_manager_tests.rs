@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use goose::config::GooseMode;
-use goose::conversation::message::{Message, ToolRequest};
 use goose::tool_inspection::{
     InspectionAction, InspectionResult, ToolInspectionManager, ToolInspector,
 };
+use goose_providers::conversation::message::{Message, ToolRequest};
 
 struct MockInspectorOk {
     name: &'static str,

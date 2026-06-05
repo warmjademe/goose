@@ -23,9 +23,9 @@ use chrono::{DateTime, Utc};
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
 use serde_json::{json, Map, Value};
 
-use crate::conversation::message::Message;
 use crate::conversation::Conversation;
 use crate::providers::formats::openai_responses::{ResponseOutputItem, ResponsesApiResponse};
+use goose_providers::conversation::message::Message;
 
 pub fn convert(content: &str) -> Result<String> {
     let lines: Vec<Value> = content

@@ -10,7 +10,6 @@ use tracing::debug;
 use super::super::agents::Agent;
 #[cfg(feature = "code-mode")]
 use crate::agents::platform_extensions::code_execution;
-use crate::conversation::message::{Message, MessageContent, ToolRequest};
 use crate::conversation::Conversation;
 #[cfg(test)]
 use crate::providers::base::stream_from_single_message;
@@ -20,6 +19,7 @@ use crate::providers::toolshim::{
     augment_message_with_selected_tool_interpreter, convert_tool_messages_to_text,
     modify_system_prompt_for_tool_json, sanitize_residual_markers,
 };
+use goose_providers::conversation::message::{Message, MessageContent, ToolRequest};
 use rmcp::model::Tool;
 use tracing::warn;
 
@@ -568,7 +568,7 @@ impl Agent {
         provider_name: &str,
     ) -> Option<f64> {
         let canonical =
-            crate::providers::canonical::maybe_get_canonical_model(provider_name, &usage.model)?;
+            goose_providers::canonical::maybe_get_canonical_model(provider_name, &usage.model)?;
 
         let input_price = canonical.cost.input?;
         let output_price = canonical.cost.output?;
@@ -628,12 +628,12 @@ pub fn is_tool_visible_to_model(tool: &Tool) -> bool {
 mod tests {
     use super::*;
     use crate::config::GooseMode;
-    use crate::conversation::message::Message;
-    use crate::model::ModelConfig;
     use crate::providers::base::{Provider, ProviderUsage, Usage};
     use crate::providers::errors::ProviderError;
     use crate::session::session_manager::SessionType;
     use async_trait::async_trait;
+    use goose_providers::conversation::message::Message;
+    use goose_providers::model::ModelConfig;
     use rmcp::object;
 
     #[derive(Clone)]
@@ -820,7 +820,7 @@ mod tests {
         // External requests must (1) survive coercion with goose.external_dispatch
         // intact, (2) be excluded from both dispatch buckets, (3) stay in
         // filtered_message.
-        use crate::conversation::message::TOOL_META_EXTERNAL_DISPATCH_KEY;
+        use goose_providers::conversation::message::TOOL_META_EXTERNAL_DISPATCH_KEY;
 
         let agent = crate::agents::Agent::new();
 

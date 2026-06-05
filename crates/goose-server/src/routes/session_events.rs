@@ -12,8 +12,8 @@ use axum::{
 use bytes::Bytes;
 use futures::{stream::StreamExt, Stream};
 use goose::agents::{AgentEvent, SessionConfig};
-use goose::conversation::message::Message;
 use goose::conversation::Conversation;
+use goose_providers::conversation::message::Message;
 use serde::{Deserialize, Serialize};
 use std::{
     convert::Infallible,
@@ -322,10 +322,10 @@ pub async fn session_reply(
     let is_elicitation_response = user_message.content.iter().any(|c| {
         matches!(
             c,
-            goose::conversation::message::MessageContent::ActionRequired(ar)
+            goose_providers::conversation::message::MessageContent::ActionRequired(ar)
                 if matches!(
                     ar.data,
-                    goose::conversation::message::ActionRequiredData::ElicitationResponse { .. }
+                    goose_providers::conversation::message::ActionRequiredData::ElicitationResponse { .. }
                 )
         )
     });

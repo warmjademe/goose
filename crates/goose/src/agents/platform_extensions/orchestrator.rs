@@ -4,7 +4,6 @@ use crate::agents::tool_execution::ToolCallContext;
 use crate::agents::{AgentEvent, SessionConfig};
 use crate::config::{Config, ExtensionConfig, GooseMode};
 use crate::context_mgmt::format_message_for_compacting;
-use crate::conversation::message::Message;
 use crate::execution::manager::AgentManager;
 use crate::providers;
 use crate::providers::base::Provider;
@@ -13,6 +12,7 @@ use crate::session::session_manager::SessionType;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
+use goose_providers::conversation::message::Message;
 use rmcp::model::{
     CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
     ServerCapabilities, Tool,
@@ -346,7 +346,7 @@ impl OrchestratorClient {
             .content
             .iter()
             .filter_map(|c| {
-                if let crate::conversation::message::MessageContent::Text(t) = c {
+                if let goose_providers::conversation::message::MessageContent::Text(t) = c {
                     Some(t.text.clone())
                 } else {
                     None

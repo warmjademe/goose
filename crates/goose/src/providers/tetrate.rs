@@ -8,13 +8,13 @@ use super::openai_compatible::{
 use super::retry::ProviderRetry;
 use super::utils::RequestLog;
 use crate::config::signup_tetrate::TETRATE_DEFAULT_MODEL;
-use crate::conversation::message::Message;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use goose_providers::conversation::message::Message;
 
-use crate::model::ModelConfig;
 use crate::providers::formats::openai::create_request;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 use serde_json::Value;
 

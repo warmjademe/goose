@@ -14,8 +14,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agents::extension::PlatformExtensionContext;
 use crate::agents::mcp_client::{Error, McpClientTrait};
-use crate::conversation::message::Message;
 use crate::providers::base::Provider;
+use goose_providers::conversation::message::Message;
 
 pub static EXTENSION_NAME: &str = "summarize";
 
@@ -198,7 +198,7 @@ async fn execute_summarize(
         .content
         .iter()
         .filter_map(|c| {
-            if let crate::conversation::message::MessageContent::Text(t) = c {
+            if let goose_providers::conversation::message::MessageContent::Text(t) = c {
                 Some(t.text.clone())
             } else {
                 None

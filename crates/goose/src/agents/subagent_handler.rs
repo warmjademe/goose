@@ -1,14 +1,12 @@
 use crate::{
     agents::{subagent_task_config::TaskConfig, Agent, AgentConfig, AgentEvent, SessionConfig},
-    conversation::{
-        message::{Message, MessageContent},
-        Conversation,
-    },
+    conversation::Conversation,
     prompt_template::render_template,
     recipe::Recipe,
 };
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
+use goose_providers::conversation::message::{Message, MessageContent};
 use rmcp::model::{
     ErrorCode, ErrorData, LoggingLevel, LoggingMessageNotificationParam, Notification,
     ServerNotification,
@@ -69,7 +67,7 @@ fn extract_response_text(messages: &Conversation, return_last_only: bool) -> Str
             .last()
             .and_then(|message| {
                 message.content.iter().find_map(|content| match content {
-                    crate::conversation::message::MessageContent::Text(text_content) => {
+                    goose_providers::conversation::message::MessageContent::Text(text_content) => {
                         Some(text_content.text.clone())
                     }
                     _ => None,
@@ -81,10 +79,12 @@ fn extract_response_text(messages: &Conversation, return_last_only: bool) -> Str
             .iter()
             .flat_map(|message| {
                 message.content.iter().filter_map(|content| match content {
-                    crate::conversation::message::MessageContent::Text(text_content) => {
+                    goose_providers::conversation::message::MessageContent::Text(text_content) => {
                         Some(text_content.text.clone())
                     }
-                    crate::conversation::message::MessageContent::ToolResponse(tool_response) => {
+                    goose_providers::conversation::message::MessageContent::ToolResponse(
+                        tool_response,
+                    ) => {
                         if let Ok(result) = &tool_response.tool_result {
                             let texts: Vec<String> = result
                                 .content
@@ -300,7 +300,7 @@ pub fn create_tool_notification(
 #[cfg(test)]
 mod tests {
     use super::{create_tool_notification, SUBAGENT_TOOL_REQUEST_TYPE};
-    use crate::conversation::message::MessageContent;
+    use goose_providers::conversation::message::MessageContent;
     use rmcp::model::{CallToolRequestParams, ServerNotification};
     use serde_json::json;
 

@@ -20,8 +20,8 @@ use common_tests::{
     run_shell_terminal_false, run_shell_terminal_true,
 };
 use goose::config::GooseMode;
-use goose::conversation::message::Message;
 use goose::session::{SessionManager, SessionType};
+use goose_providers::conversation::message::Message;
 use std::path::Path;
 
 tests_config_option_set_error!(AcpServerConnection);

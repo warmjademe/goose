@@ -4,7 +4,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use goose::conversation::message::Message;
+use goose_providers::conversation::message::Message;
 use rmcp::model::{
     CreateMessageRequestParams, CreateMessageResult, Role, SamplingContent, SamplingMessage,
     SamplingMessageContent,

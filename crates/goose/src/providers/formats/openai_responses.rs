@@ -1,6 +1,4 @@
-use crate::conversation::message::{Message, MessageContent};
 use crate::mcp_utils::extract_text_from_resource;
-use crate::model::ModelConfig;
 use crate::providers::base::{ProviderUsage, Usage};
 use crate::providers::utils::{
     extract_reasoning_effort, is_openai_responses_model, openai_reasoning_effort_for_thinking,
@@ -9,6 +7,8 @@ use anyhow::{anyhow, Error};
 use async_stream::try_stream;
 use chrono;
 use futures::Stream;
+use goose_providers::conversation::message::{Message, MessageContent};
+use goose_providers::model::ModelConfig;
 use rmcp::model::{object, CallToolRequestParams, RawContent, Role, Tool};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -942,9 +942,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation::message::MessageContent;
-    use crate::model::ModelConfig;
     use futures::StreamExt;
+    use goose_providers::conversation::message::MessageContent;
+    use goose_providers::model::ModelConfig;
     use rmcp::model::CallToolRequestParams;
     use rmcp::object;
 
@@ -1398,7 +1398,7 @@ mod tests {
 
     #[test]
     fn test_user_image_serialized_in_responses_request() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         let messages = vec![Message::user()
             .with_text("describe this image")
@@ -1440,7 +1440,7 @@ mod tests {
 
     #[test]
     fn test_tool_response_with_image_serializes_as_typed_array() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
         use rmcp::model::{CallToolResult, Content};
 
         let messages = vec![Message::user().with_content(MessageContent::tool_response(
@@ -1480,7 +1480,7 @@ mod tests {
 
     #[test]
     fn test_tool_request_serializes_function_call_with_arguments() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         let messages = vec![Message::assistant().with_tool_request(
             "call_1",
@@ -1515,7 +1515,7 @@ mod tests {
 
     #[test]
     fn test_tool_request_none_arguments_serializes_empty_object() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         let messages = vec![Message::assistant()
             .with_tool_request("call_1", Ok(CallToolRequestParams::new("noop")))];
@@ -1542,7 +1542,7 @@ mod tests {
 
     #[test]
     fn test_text_flushed_before_tool_request() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         let messages = vec![Message::assistant()
             .with_text("planning")
@@ -1575,7 +1575,7 @@ mod tests {
 
     #[test]
     fn test_text_flushed_before_tool_response() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
         use rmcp::model::{CallToolResult, Content};
 
         let messages =
@@ -1611,7 +1611,7 @@ mod tests {
 
     #[test]
     fn test_tool_response_error_serializes_with_error_prefix() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
         use rmcp::model::{ErrorCode, ErrorData};
 
         let messages = vec![Message::user().with_content(MessageContent::tool_response(
@@ -1645,7 +1645,7 @@ mod tests {
 
     #[test]
     fn test_image_only_message_serializes() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         let messages = vec![Message::user().with_image("aW1n", "image/png")];
 
@@ -1674,7 +1674,7 @@ mod tests {
 
     #[test]
     fn test_multiple_images_preserved_in_order() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         let messages = vec![Message::user()
             .with_text("compare")
@@ -1709,7 +1709,7 @@ mod tests {
 
     #[test]
     fn test_assistant_text_uses_output_text_type() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
 
         let messages = vec![Message::assistant().with_text("hello")];
 
@@ -1820,7 +1820,7 @@ mod tests {
 
     #[test]
     fn test_frontend_tool_request_serialized_in_responses_request() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
         use rmcp::model::{CallToolResult, Content};
 
         let messages = vec![
@@ -1861,7 +1861,7 @@ mod tests {
 
     #[test]
     fn test_tool_request_error_emits_function_call_output() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
         use rmcp::model::{ErrorCode, ErrorData};
 
         let messages = vec![Message::assistant().with_tool_request(
@@ -1899,7 +1899,7 @@ mod tests {
 
     #[test]
     fn test_frontend_tool_request_error_emits_function_call_output() {
-        use crate::conversation::message::Message;
+        use goose_providers::conversation::message::Message;
         use rmcp::model::{ErrorCode, ErrorData};
 
         let messages = vec![Message::assistant().with_frontend_tool_request(
