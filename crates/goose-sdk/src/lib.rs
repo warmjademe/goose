@@ -19,3 +19,6 @@ uniffi::setup_scaffolding!("aaif_goose");
 
 #[cfg(feature = "uniffi")]
 pub mod bindings;
+
+#[cfg(feature = "uniffi")]
+pub mod providers;
