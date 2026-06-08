@@ -3,6 +3,7 @@ use async_stream::try_stream;
 use futures::TryStreamExt;
 use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::images::ImageFormat;
+use goose_providers::models::ModelConfigParams;
 use reqwest::Response;
 #[cfg(test)]
 use reqwest::StatusCode;
@@ -22,7 +23,6 @@ use crate::providers::formats::openai_responses::responses_api_to_streaming_mess
 use goose_providers::errors::ProviderError;
 use goose_providers::formats::openai::{
     create_request, get_usage, response_to_message, response_to_streaming_message,
-    ModelConfigParams,
 };
 use rmcp::model::Tool;
 

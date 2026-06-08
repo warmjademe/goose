@@ -4,6 +4,7 @@ use crate::errors::ProviderError;
 use crate::images::{convert_image, detect_image_path, load_image_file, ImageFormat};
 use crate::json::safely_parse_json;
 use crate::mcp_utils::extract_text_from_resource;
+use crate::models::ModelConfigParams;
 use crate::thinking::{
     split_think_blocks, ThinkFilter, ThinkingEffort, GEMINI_THOUGHT_SIGNATURE_KEY,
 };
@@ -1237,14 +1238,6 @@ pub fn create_request(
             preserve_thinking_context: true,
         },
     )
-}
-
-pub struct ModelConfigParams<'a> {
-    pub model_name: &'a str,
-    pub thinking_effort: Option<ThinkingEffort>,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<i32>,
-    pub request_params: Option<&'a HashMap<String, Value>>,
 }
 
 pub fn create_request_with_options(

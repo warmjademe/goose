@@ -13,9 +13,10 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use goose_providers::errors::ProviderError;
 use goose_providers::images::ImageFormat;
+use goose_providers::models::ModelConfigParams;
 
 use crate::model::ModelConfig;
-use goose_providers::formats::openai::{create_request, ModelConfigParams};
+use goose_providers::formats::openai::create_request;
 use rmcp::model::Tool;
 use serde_json::Value;
 

@@ -3,10 +3,9 @@ use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::TryStreamExt;
-use goose_providers::formats::openai::{
-    self, extract_reasoning_effort, is_openai_responses_model, ModelConfigParams,
-};
+use goose_providers::formats::openai::{self, extract_reasoning_effort, is_openai_responses_model};
 use goose_providers::images::ImageFormat;
+use goose_providers::models::ModelConfigParams;
 use serde::Serialize;
 use serde_json::Value;
 use std::io;

@@ -4,6 +4,7 @@ use futures::future::BoxFuture;
 use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::errors::ProviderError;
 use goose_providers::images::ImageFormat;
+use goose_providers::models::ModelConfigParams;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -18,7 +19,6 @@ use super::retry::ProviderRetry;
 use super::utils::{get_model, RequestLog};
 use crate::conversation::message::Message;
 use crate::model::ModelConfig;
-use goose_providers::formats::openai::ModelConfigParams;
 use rmcp::model::Tool;
 
 const LITELLM_PROVIDER_NAME: &str = "litellm";
