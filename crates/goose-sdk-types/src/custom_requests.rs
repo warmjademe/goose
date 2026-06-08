@@ -2252,7 +2252,7 @@ pub enum ExtensionConfigDto {
         envs: HashMap<String, String>,
         #[serde(default)]
         env_keys: Vec<String>,
-        timeout: Option<u32>,
+        timeout: Option<u64>,
         #[serde(default)]
         bundled: Option<bool>,
         #[serde(default)]
@@ -2264,7 +2264,7 @@ pub enum ExtensionConfigDto {
         #[serde(default)]
         description: String,
         display_name: Option<String>,
-        timeout: Option<u32>,
+        timeout: Option<u64>,
         #[serde(default)]
         bundled: Option<bool>,
         #[serde(default)]
@@ -2293,7 +2293,7 @@ pub enum ExtensionConfigDto {
         env_keys: Vec<String>,
         #[serde(default)]
         headers: HashMap<String, String>,
-        timeout: Option<u32>,
+        timeout: Option<u64>,
         #[serde(default)]
         socket: Option<String>,
         #[serde(default)]
@@ -2319,7 +2319,7 @@ pub enum ExtensionConfigDto {
         #[serde(default)]
         description: String,
         code: String,
-        timeout: Option<u32>,
+        timeout: Option<u64>,
         #[serde(default)]
         dependencies: Option<Vec<String>>,
         #[serde(default)]
