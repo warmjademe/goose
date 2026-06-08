@@ -10,13 +10,13 @@ use super::utils::RequestLog;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
 use crate::conversation::message::Message;
 use crate::model::ModelConfig;
-use crate::providers::formats::ollama::{create_request, response_to_streaming_message_ollama};
 use anyhow::{Error, Result};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::TryStreamExt;
 use goose_providers::errors::ProviderError;
+use goose_providers::formats::ollama::{create_request, response_to_streaming_message_ollama};
 use goose_providers::images::ImageFormat;
 use goose_providers::models::ModelConfigParams;
 use reqwest::Response;
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_raw_create_request_contains_unsupported_ollama_fields() {
-        use crate::providers::formats::ollama::create_request;
+        use goose_providers::formats::ollama::create_request;
 
         let model_config = ModelConfig::new("llama3.1")
             .unwrap()
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn test_apply_ollama_options_preserves_stream_options_by_default() {
-        use crate::providers::formats::ollama::create_request;
+        use goose_providers::formats::ollama::create_request;
 
         let _guard = env_lock::lock_env([
             ("GOOSE_INPUT_LIMIT", None::<&str>),
@@ -650,7 +650,7 @@ mod tests {
 
     #[test]
     fn test_apply_ollama_options_strips_stream_options_when_disabled() {
-        use crate::providers::formats::ollama::create_request;
+        use goose_providers::formats::ollama::create_request;
 
         let _guard = env_lock::lock_env([
             ("GOOSE_INPUT_LIMIT", None::<&str>),

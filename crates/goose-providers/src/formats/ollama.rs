@@ -10,21 +10,19 @@
 //! - qwen3-coder-32b
 
 use crate::conversation::message::{Message, MessageContent};
+use crate::conversation::token_usage::ProviderUsage;
 use async_stream::try_stream;
 use chrono;
 use futures::Stream;
-use goose_providers::{
-    conversation::token_usage::ProviderUsage,
-    formats::openai::{self, is_valid_function_name},
-};
 use regex::Regex;
 use rmcp::model::{object, CallToolRequestParams, ErrorCode, ErrorData, Role};
 use serde_json::Value;
 use std::borrow::Cow;
 use uuid::Uuid;
 
-pub use goose_providers::formats::openai::{
-    create_request, format_messages, format_tools, get_usage, validate_tool_schemas,
+pub use super::openai::{
+    self, create_request, format_messages, format_tools, get_usage, is_valid_function_name,
+    validate_tool_schemas,
 };
 
 /// Parse XML-style tool calls from content (Ollama/Qwen3-coder fallback format).
