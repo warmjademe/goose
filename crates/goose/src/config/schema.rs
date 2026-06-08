@@ -927,12 +927,23 @@ impl GooseConfigSchema {
         config.set_param_values(&updates)?;
 
         if let Some(ref provider) = self.goose_provider {
-            let model = self
-                .goose_model
-                .clone()
-                .or_else(|| crate::config::get_provider_entry(config, provider).map(|e| e.model))
-                .unwrap_or_default();
-            crate::config::set_active_provider(config, provider, &model)?;
+            let provider_removed = self
+                .providers
+                .as_ref()
+                .is_some_and(|p| !p.contains_key(provider));
+            if provider_removed {
+                config.set_param("active_provider", serde_json::Value::Null)?;
+                config.set_param("GOOSE_PROVIDER", serde_json::Value::Null)?;
+            } else {
+                let model = self
+                    .goose_model
+                    .clone()
+                    .or_else(|| {
+                        crate::config::get_provider_entry(config, provider).map(|e| e.model)
+                    })
+                    .unwrap_or_default();
+                crate::config::set_active_provider(config, provider, &model)?;
+            }
         } else if let Some(ref model) = self.goose_model {
             if crate::config::get_active_provider(config).is_some() {
                 config.set_goose_model(model)?;
@@ -1351,6 +1362,57 @@ mod tests {
         assert!(
             legacy.is_err(),
             "legacy GOOSE_PROVIDER should be cleared even without active_provider"
+        );
+    }
+
+    #[test]
+    fn full_write_clears_provider_when_removed_from_map() {
+        use crate::config::providers::ProviderEntry;
+
+        let config_file = tempfile::NamedTempFile::new().unwrap();
+        let secrets_file = tempfile::NamedTempFile::new().unwrap();
+        let config =
+            Config::new_with_file_secrets(config_file.path(), secrets_file.path()).unwrap();
+
+        config.set_param("active_provider", "anthropic").unwrap();
+        config.set_param("GOOSE_PROVIDER", "anthropic").unwrap();
+        let mut providers = HashMap::new();
+        providers.insert(
+            "anthropic".to_string(),
+            ProviderEntry {
+                enabled: true,
+                model: "claude-sonnet-4-20250514".to_string(),
+                configured: true,
+            },
+        );
+        config.set_param("providers", &providers).unwrap();
+
+        let mut new_providers = HashMap::new();
+        new_providers.insert(
+            "openai".to_string(),
+            ProviderEntry {
+                enabled: true,
+                model: "gpt-4o".to_string(),
+                configured: true,
+            },
+        );
+
+        let schema = GooseConfigSchema {
+            goose_provider: Some("anthropic".to_string()),
+            providers: Some(new_providers),
+            ..Default::default()
+        };
+        schema.apply_to_config(&config).unwrap();
+
+        let active: Result<String, _> = config.get_param("active_provider");
+        assert!(
+            active.is_err(),
+            "active_provider should be cleared in full write when provider removed from map"
+        );
+        let legacy: Result<String, _> = config.get_param("GOOSE_PROVIDER");
+        assert!(
+            legacy.is_err(),
+            "GOOSE_PROVIDER should be cleared in full write when provider removed from map"
         );
     }
 }
