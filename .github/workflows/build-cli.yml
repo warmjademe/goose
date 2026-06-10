@@ -172,9 +172,12 @@ jobs:
           fi
 
           if [ "${{ matrix.variant }}" = "musl" ]; then
-            cargo build --release --target ${TARGET} -p goose-cli --bin goose \
+            cargo build --profile release-small --target ${TARGET} -p goose-cli --bin goose \
               --no-default-features \
               --features portable-default
+            # Packaging reads from the release/ dir; surface the release-small binary there.
+            mkdir -p "target/${TARGET}/release"
+            cp "target/${TARGET}/release-small/goose" "target/${TARGET}/release/goose"
           else
             cargo build --release --target ${TARGET} -p goose-cli "${FEATURE_ARGS[@]}"
           fi
