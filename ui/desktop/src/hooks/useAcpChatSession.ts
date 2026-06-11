@@ -30,6 +30,16 @@ import { showExtensionLoadResults } from '../utils/extensionErrorUtils';
 import { maybeHandlePlatformEvent } from '../utils/platform_events';
 import { useSessionEvents, type SessionEvent } from './useSessionEvents';
 import type { UseChatSessionParams, UseChatSessionResult } from './useChatSessionTypes';
+import {
+  subscribeToAcpGooseSession,
+  subscribeToAcpSession,
+} from '../acp/chatNotifications';
+import { acpPromptSession } from '../acp/prompt';
+import {
+  createAcpSessionNotificationAdapter,
+  type AcpChatUpdate,
+  type AcpSessionNotificationAdapter,
+} from '../acp/sessionNotificationAdapter';
 
 const resultsCache = new Map<string, { messages: Message[]; session: Session }>();
 
@@ -50,6 +60,7 @@ type StreamAction =
   | { type: 'SET_TOKEN_STATE'; payload: TokenState }
   | { type: 'ADD_NOTIFICATION'; payload: NotificationEvent }
   | { type: 'CLEAR_NOTIFICATIONS' }
+  | { type: 'APPLY_ACP_CHAT_UPDATE'; payload: AcpChatUpdate }
   | {
       type: 'SESSION_LOADED';
       payload: {
@@ -103,6 +114,24 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
 
     case 'CLEAR_NOTIFICATIONS':
       return { ...state, notifications: [] };
+
+    case 'APPLY_ACP_CHAT_UPDATE': {
+      const update = action.payload;
+      switch (update.type) {
+        case 'messages':
+          return { ...state, messages: update.messages };
+        case 'tokenState':
+          return { ...state, tokenState: { ...state.tokenState, ...update.tokenState } };
+        case 'sessionInfo':
+          return update.name
+            ? {
+                ...state,
+                session: state.session ? { ...state.session, name: update.name } : undefined,
+              }
+            : state;
+      }
+      return state;
+    }
 
     case 'SESSION_LOADED':
       return {
@@ -409,6 +438,38 @@ export function useAcpChatSession({
   const stateRef = useRef(state);
   stateRef.current = state;
   const doReattachRef = useRef<((requestId: string, messages: Message[]) => void) | null>(null);
+  const acpAdapterRef = useRef<AcpSessionNotificationAdapter>(
+    createAcpSessionNotificationAdapter()
+  );
+
+  const dispatchAcpChatUpdates = useCallback((updates: AcpChatUpdate[]) => {
+    for (const update of updates) {
+      dispatch({ type: 'APPLY_ACP_CHAT_UPDATE', payload: update });
+    }
+  }, []);
+
+  useEffect(() => {
+    const messages = state.session?.id === sessionId ? state.messages : [];
+    acpAdapterRef.current = createAcpSessionNotificationAdapter(messages);
+  }, [sessionId, state.messages, state.session?.id]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    const unsubscribeAcp = subscribeToAcpSession(sessionId, (notification) => {
+      dispatchAcpChatUpdates(acpAdapterRef.current.apply(notification));
+    });
+    const unsubscribeGoose = subscribeToAcpGooseSession(sessionId, (notification) => {
+      dispatchAcpChatUpdates(acpAdapterRef.current.applyGoose(notification));
+    });
+
+    return () => {
+      unsubscribeAcp();
+      unsubscribeGoose();
+    };
+  }, [dispatchAcpChatUpdates, sessionId]);
 
   useEffect(() => {
     return () => {
@@ -700,6 +761,24 @@ export function useAcpChatSession({
     [addListener, onFinish, reloadConversation]
   );
 
+  const submitToAcpSession = useCallback(
+    async (targetSessionId: string, userMessage: Message) => {
+      activeRequestSessionIdRef.current = targetSessionId;
+
+      try {
+        await acpPromptSession(targetSessionId, userMessage);
+        onFinish();
+      } catch (error) {
+        onFinish('Submit error: ' + errorMessage(error));
+      } finally {
+        if (activeRequestSessionIdRef.current === targetSessionId) {
+          activeRequestSessionIdRef.current = null;
+        }
+      }
+    },
+    [onFinish]
+  );
+
   // Load session on mount or sessionId change
   useEffect(() => {
     if (!sessionId) return;
@@ -915,9 +994,9 @@ export function useAcpChatSession({
 
       dispatch({ type: 'START_STREAMING' });
 
-      await submitToSession(sessionId, newMessage, currentMessages);
+      await submitToAcpSession(sessionId, newMessage);
     },
-    [sessionId, submitToSession]
+    [sessionId, submitToAcpSession]
   );
 
   const submitElicitationResponse = useCallback(

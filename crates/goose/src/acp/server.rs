@@ -2402,21 +2402,13 @@ impl GooseAcpAgent {
 
         let run_id = format!("run_{}", Uuid::new_v4());
         let cancel_token = CancellationToken::new();
+        let agent = self.get_session_agent(&session_id, None).await?;
         self.start_active_run(&session_id, run_id.clone(), cancel_token.clone())
             .await?;
         if let Err(error) = Self::send_active_run_update(cx, &args.session_id, Some(&run_id)) {
             self.clear_active_run(&session_id, &run_id).await;
             return Err(error);
         }
-
-        let agent = match self.get_session_agent(&session_id, None).await {
-            Ok(agent) => agent,
-            Err(error) => {
-                self.clear_active_run(&session_id, &run_id).await;
-                let _ = Self::send_active_run_update(cx, &args.session_id, None);
-                return Err(error);
-            }
-        };
 
         let user_message = Self::convert_acp_prompt_to_message(&args.prompt);
 
