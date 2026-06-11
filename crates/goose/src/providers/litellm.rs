@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::errors::ProviderError;
+use goose_providers::formats::openai::OpenAIRequestBuilder;
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -228,20 +228,19 @@ impl Provider for LiteLLMProvider {
         } else {
             Some(session_id)
         };
-        let mut payload = goose_providers::formats::openai::create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let mut payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             system,
             messages,
             tools,
             &ImageFormat::OpenAi,
-            false,
-        )?;
+        )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(false)
+        .build()?;
 
         if self.supports_cache_control().await {
             payload = update_request_for_cache_control(&payload);

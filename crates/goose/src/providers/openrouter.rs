@@ -2,7 +2,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use serde_json::{json, Value};
 
 use super::api_client::{ApiClient, AuthMethod};
@@ -14,7 +13,7 @@ use crate::conversation::message::Message;
 use crate::model::ModelConfig;
 use crate::providers::formats::openrouter as openrouter_format;
 use goose_providers::errors::ProviderError;
-use goose_providers::formats::openai::create_request;
+use goose_providers::formats::openai::OpenAIRequestBuilder;
 use rmcp::model::Tool;
 
 pub const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
@@ -257,20 +256,19 @@ impl Provider for OpenRouterProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let mut payload = create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let mut payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             system,
             messages,
             tools,
             &ImageFormat::OpenAi,
-            true,
-        )?;
+        )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(true)
+        .build()?;
 
         // Add user field for OpenRouter attribution/rate-limiting
         if !session_id.is_empty() {

@@ -3,9 +3,10 @@ use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::TryStreamExt;
-use goose_providers::formats::openai::{self, extract_reasoning_effort, is_openai_responses_model};
+use goose_providers::formats::openai::{
+    extract_reasoning_effort, is_openai_responses_model, OpenAIRequestBuilder,
+};
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use serde::Serialize;
 use serde_json::Value;
 use std::io;
@@ -250,20 +251,19 @@ impl DatabricksV2Provider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let mut payload = openai::create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let mut payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             system,
             messages,
             tools,
             &ImageFormat::OpenAi,
-            true,
-        )?;
+        )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(true)
+        .build()?;
         if payload.get("max_tokens").is_none() {
             payload["max_tokens"] = Value::from(model_config.max_output_tokens());
         }

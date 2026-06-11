@@ -4,7 +4,6 @@ use crate::errors::ProviderError;
 use crate::images::{convert_image, detect_image_path, load_image_file, ImageFormat};
 use crate::json::safely_parse_json;
 use crate::mcp_utils::extract_text_from_resource;
-use crate::models::ModelConfigParams;
 use crate::thinking::{
     split_think_blocks, ThinkFilter, ThinkingEffort, GEMINI_THOUGHT_SIGNATURE_KEY,
 };
@@ -1219,119 +1218,172 @@ where
     }
 }
 
-pub fn create_request(
-    model_config: ModelConfigParams,
-    system: &str,
-    messages: &[Message],
-    tools: &[Tool],
-    image_format: &ImageFormat,
-    for_streaming: bool,
-) -> anyhow::Result<Value, Error> {
-    create_request_with_options(
-        model_config,
-        system,
-        messages,
-        tools,
-        image_format,
-        for_streaming,
-        OpenAiFormatOptions {
-            preserve_thinking_context: true,
-        },
-    )
-}
-
-pub fn create_request_with_options(
-    model_config: ModelConfigParams,
-    system: &str,
-    messages: &[Message],
-    tools: &[Tool],
-    image_format: &ImageFormat,
+pub struct OpenAIRequestBuilder<'a> {
+    model_name: &'a str,
+    system: &'a str,
+    messages: &'a [Message],
+    tools: &'a [Tool],
+    image_format: &'a ImageFormat,
     for_streaming: bool,
     format_options: OpenAiFormatOptions,
-) -> anyhow::Result<Value, Error> {
-    if model_config.model_name.starts_with("o1-mini") {
-        return Err(anyhow!(
-            "o1-mini model is not currently supported since goose uses tool calling and o1-mini does not support it. Please use o1 or o3 models instead."
-        ));
-    }
+    thinking_effort: Option<ThinkingEffort>,
+    temperature: Option<f32>,
+    max_tokens: Option<i32>,
+    request_params: Option<&'a HashMap<String, Value>>,
+}
 
-    let (model_name, legacy_reasoning_effort) = extract_reasoning_effort(model_config.model_name);
-    let is_reasoning_model = is_openai_responses_model(&model_name);
-    let reasoning_effort = if is_reasoning_model {
-        model_config
-            .thinking_effort
-            .map_or(legacy_reasoning_effort, |effort| {
-                openai_reasoning_effort_for_thinking(&model_name, effort)
-            })
-    } else {
-        None
-    };
-
-    let system_message = json!({
-        "role": if is_reasoning_model { "developer" } else { "system" },
-        "content": system
-    });
-
-    let messages_spec = format_messages_with_options(messages, image_format, format_options);
-    let mut tools_spec = format_tools(tools)?;
-
-    validate_tool_schemas(&mut tools_spec);
-
-    let mut messages_array = vec![system_message];
-    messages_array.extend(messages_spec);
-
-    let mut payload = json!({
-        "model": model_name,
-        "messages": messages_array
-    });
-
-    if let Some(effort) = reasoning_effort {
-        payload["reasoning_effort"] = json!(effort);
-    }
-
-    if !tools_spec.is_empty() {
-        payload["tools"] = json!(tools_spec);
-    }
-
-    if !is_reasoning_model {
-        if let Some(temp) = model_config.temperature {
-            payload["temperature"] = json!(temp);
+impl<'a> OpenAIRequestBuilder<'a> {
+    pub fn new(
+        model_name: &'a str,
+        system: &'a str,
+        messages: &'a [Message],
+        tools: &'a [Tool],
+        image_format: &'a ImageFormat,
+    ) -> Self {
+        Self {
+            model_name,
+            system,
+            messages,
+            tools,
+            image_format,
+            for_streaming: false,
+            format_options: OpenAiFormatOptions {
+                preserve_thinking_context: true,
+            },
+            thinking_effort: None,
+            temperature: None,
+            max_tokens: None,
+            request_params: None,
         }
     }
 
-    // Only emit max_tokens / max_completion_tokens when the user (via
-    // GOOSE_MAX_TOKENS) or a canonical model record has supplied a value.
-    // For unknown models on OpenAI-compatible endpoints (e.g. llama_swap,
-    // lmstudio) sending the historic 4096 default truncates non-trivial
-    // responses; omitting the field lets the server use its own max.
-    if let Some(max_tokens) = model_config.max_tokens {
-        let key = if is_reasoning_model {
-            "max_completion_tokens"
+    pub fn with_streaming(mut self, for_streaming: bool) -> Self {
+        self.for_streaming = for_streaming;
+        self
+    }
+
+    pub fn with_format_options(mut self, format_options: OpenAiFormatOptions) -> Self {
+        self.format_options = format_options;
+        self
+    }
+
+    pub fn with_preserve_thinking_context(mut self, preserve_thinking_context: bool) -> Self {
+        self.format_options.preserve_thinking_context = preserve_thinking_context;
+        self
+    }
+
+    pub fn with_thinking_effort(mut self, thinking_effort: Option<ThinkingEffort>) -> Self {
+        self.thinking_effort = thinking_effort;
+        self
+    }
+
+    pub fn with_temperature(mut self, temperature: Option<f32>) -> Self {
+        self.temperature = temperature;
+        self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: Option<i32>) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    pub fn with_request_params(
+        mut self,
+        request_params: Option<&'a HashMap<String, Value>>,
+    ) -> Self {
+        self.request_params = request_params;
+        self
+    }
+
+    pub fn build(&self) -> anyhow::Result<Value, Error> {
+        self.create_request()
+    }
+
+    pub fn create_request(&self) -> anyhow::Result<Value, Error> {
+        if self.model_name.starts_with("o1-mini") {
+            return Err(anyhow!(
+                    "o1-mini model is not currently supported since goose uses tool calling and o1-mini does not support it. Please use o1 or o3 models instead."
+                ));
+        }
+
+        let (model_name, legacy_reasoning_effort) = extract_reasoning_effort(self.model_name);
+        let is_reasoning_model = is_openai_responses_model(&model_name);
+        let reasoning_effort = if is_reasoning_model {
+            self.thinking_effort
+                .map_or(legacy_reasoning_effort, |effort| {
+                    openai_reasoning_effort_for_thinking(&model_name, effort)
+                })
         } else {
-            "max_tokens"
+            None
         };
-        payload
-            .as_object_mut()
-            .unwrap()
-            .insert(key.to_string(), json!(max_tokens));
-    }
 
-    if for_streaming {
-        payload["stream"] = json!(true);
-        payload["stream_options"] = json!({"include_usage": true});
-    }
+        let system_message = json!({
+            "role": if is_reasoning_model { "developer" } else { "system" },
+            "content": self.system
+        });
 
-    if let Some(params) = model_config.request_params {
-        if let Some(obj) = payload.as_object_mut() {
-            for (key, value) in params {
-                if key != "thinking_effort" && !is_reserved_request_param_key(key) {
-                    obj.insert(key.clone(), value.clone());
+        let messages_spec =
+            format_messages_with_options(self.messages, self.image_format, self.format_options);
+        let mut tools_spec = format_tools(self.tools)?;
+
+        validate_tool_schemas(&mut tools_spec);
+
+        let mut messages_array = vec![system_message];
+        messages_array.extend(messages_spec);
+
+        let mut payload = json!({
+            "model": model_name,
+            "messages": messages_array
+        });
+
+        if let Some(effort) = reasoning_effort {
+            payload["reasoning_effort"] = json!(effort);
+        }
+
+        if !tools_spec.is_empty() {
+            payload["tools"] = json!(tools_spec);
+        }
+
+        if !is_reasoning_model {
+            if let Some(temp) = self.temperature {
+                payload["temperature"] = json!(temp);
+            }
+        }
+
+        // Only emit max_tokens / max_completion_tokens when the user (via
+        // GOOSE_MAX_TOKENS) or a canonical model record has supplied a value.
+        // For unknown models on OpenAI-compatible endpoints (e.g. llama_swap,
+        // lmstudio) sending the historic 4096 default truncates non-trivial
+        // responses; omitting the field lets the server use its own max.
+        if let Some(max_tokens) = self.max_tokens {
+            let key = if is_reasoning_model {
+                "max_completion_tokens"
+            } else {
+                "max_tokens"
+            };
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert(key.to_string(), json!(max_tokens));
+        }
+
+        if self.for_streaming {
+            payload["stream"] = json!(true);
+            payload["stream_options"] = json!({"include_usage": true});
+        }
+
+        if let Some(params) = self.request_params {
+            if let Some(obj) = payload.as_object_mut() {
+                for (key, value) in params {
+                    if key != "thinking_effort" && !is_reserved_request_param_key(key) {
+                        obj.insert(key.clone(), value.clone());
+                    }
                 }
             }
         }
-    }
 
-    Ok(payload)
+        Ok(payload)
+    }
 }
 
 /// Extract an explicit reasoning-effort suffix from a model name.
@@ -2127,21 +2179,10 @@ mod tests {
     #[test]
     fn test_create_request_gpt_4o() -> anyhow::Result<()> {
         // Test default medium reasoning effort for O3 model
-        let model_config = ModelConfigParams {
-            model_name: "gpt-4o",
-            thinking_effort: None,
-            temperature: None,
-            max_tokens: Some(1024),
-            request_params: None,
-        };
-        let request = create_request(
-            model_config,
-            "system",
-            &[],
-            &[],
-            &ImageFormat::OpenAi,
-            false,
-        )?;
+        let request = OpenAIRequestBuilder::new("gpt-4o", "system", &[], &[], &ImageFormat::OpenAi)
+            .with_max_tokens(Some(1024))
+            .with_streaming(false)
+            .build()?;
         let obj = request.as_object().unwrap();
         let expected = json!({
             "model": "gpt-4o",
@@ -2166,21 +2207,15 @@ mod tests {
         // Unknown models on OpenAI-compatible local providers (llama_swap,
         // lmstudio) have no canonical record and no GOOSE_MAX_TOKENS, so the
         // request must not pin the legacy 4096 default. See issue #9007.
-        let model_config = ModelConfigParams {
-            model_name: "some-unknown-local-model",
-            thinking_effort: None,
-            temperature: None,
-            max_tokens: None,
-            request_params: None,
-        };
-        let request = create_request(
-            model_config,
+        let request = OpenAIRequestBuilder::new(
+            "some-unknown-local-model",
             "system",
             &[],
             &[],
             &ImageFormat::OpenAi,
-            false,
-        )?;
+        )
+        .with_streaming(false)
+        .build()?;
         let obj = request.as_object().unwrap();
         assert!(
             !obj.contains_key("max_tokens"),
@@ -2214,15 +2249,12 @@ mod tests {
             ("temperature".to_string(), json!(2.0)),
             ("provider_custom".to_string(), json!("allowed")),
         ]);
-        let model_config = ModelConfigParams {
-            model_name: "glm-4.7",
-            thinking_effort: None,
-            temperature: None,
-            max_tokens: Some(4096),
-            request_params: Some(&params),
-        };
-
-        let request = create_request(model_config, "system", &[], &[], &ImageFormat::OpenAi, true)?;
+        let request =
+            OpenAIRequestBuilder::new("glm-4.7", "system", &[], &[], &ImageFormat::OpenAi)
+                .with_max_tokens(Some(4096))
+                .with_request_params(Some(&params))
+                .with_streaming(true)
+                .build()?;
 
         assert_eq!(
             request["thinking"],
@@ -2244,21 +2276,10 @@ mod tests {
 
     #[test]
     fn test_create_request_o1_default() -> anyhow::Result<()> {
-        let model_config = ModelConfigParams {
-            model_name: "o1",
-            thinking_effort: None,
-            temperature: None,
-            max_tokens: Some(1024),
-            request_params: None,
-        };
-        let request = create_request(
-            model_config,
-            "system",
-            &[],
-            &[],
-            &ImageFormat::OpenAi,
-            false,
-        )?;
+        let request = OpenAIRequestBuilder::new("o1", "system", &[], &[], &ImageFormat::OpenAi)
+            .with_max_tokens(Some(1024))
+            .with_streaming(false)
+            .build()?;
         let obj = request.as_object().unwrap();
         let expected = json!({
             "model": "o1",
@@ -2286,21 +2307,12 @@ mod tests {
     fn test_create_request_o1_medium_effort() -> anyhow::Result<()> {
         let mut params = std::collections::HashMap::new();
         params.insert("thinking_effort".to_string(), json!("medium"));
-        let model_config = ModelConfigParams {
-            model_name: "o1",
-            thinking_effort: Some(ThinkingEffort::Medium),
-            temperature: None,
-            max_tokens: Some(1024),
-            request_params: Some(&params),
-        };
-        let request = create_request(
-            model_config,
-            "system",
-            &[],
-            &[],
-            &ImageFormat::OpenAi,
-            false,
-        )?;
+        let request = OpenAIRequestBuilder::new("o1", "system", &[], &[], &ImageFormat::OpenAi)
+            .with_thinking_effort(Some(ThinkingEffort::Medium))
+            .with_max_tokens(Some(1024))
+            .with_request_params(Some(&params))
+            .with_streaming(false)
+            .build()?;
         let obj = request.as_object().unwrap();
 
         assert_eq!(obj.get("reasoning_effort"), Some(&json!("medium")));
@@ -2313,21 +2325,12 @@ mod tests {
     fn test_create_request_o3_off_effort_preserves_none() -> anyhow::Result<()> {
         let mut params = std::collections::HashMap::new();
         params.insert("thinking_effort".to_string(), json!("off"));
-        let model_config = ModelConfigParams {
-            model_name: "o3",
-            thinking_effort: Some(ThinkingEffort::Off),
-            temperature: None,
-            max_tokens: Some(1024),
-            request_params: Some(&params),
-        };
-        let request = create_request(
-            model_config,
-            "system",
-            &[],
-            &[],
-            &ImageFormat::OpenAi,
-            false,
-        )?;
+        let request = OpenAIRequestBuilder::new("o3", "system", &[], &[], &ImageFormat::OpenAi)
+            .with_thinking_effort(Some(ThinkingEffort::Off))
+            .with_max_tokens(Some(1024))
+            .with_request_params(Some(&params))
+            .with_streaming(false)
+            .build()?;
         let obj = request.as_object().unwrap();
 
         assert_eq!(obj.get("reasoning_effort"), Some(&json!("none")));
@@ -2340,21 +2343,18 @@ mod tests {
     fn test_create_request_gpt5_pro_max_effort_uses_supported_level() -> anyhow::Result<()> {
         let mut params = std::collections::HashMap::new();
         params.insert("thinking_effort".to_string(), json!("max"));
-        let model_config = ModelConfigParams {
-            model_name: "gpt-5.2-pro-2025-12-11",
-            thinking_effort: Some(ThinkingEffort::Max),
-            temperature: None,
-            max_tokens: Some(1024),
-            request_params: Some(&params),
-        };
-        let request = create_request(
-            model_config,
+        let request = OpenAIRequestBuilder::new(
+            "gpt-5.2-pro-2025-12-11",
             "system",
             &[],
             &[],
             &ImageFormat::OpenAi,
-            false,
-        )?;
+        )
+        .with_thinking_effort(Some(ThinkingEffort::Max))
+        .with_max_tokens(Some(1024))
+        .with_request_params(Some(&params))
+        .with_streaming(false)
+        .build()?;
         let obj = request.as_object().unwrap();
 
         assert_eq!(obj.get("reasoning_effort"), Some(&json!("high")));
@@ -2367,21 +2367,13 @@ mod tests {
     fn test_create_request_o3_custom_reasoning_effort() -> anyhow::Result<()> {
         let mut params = std::collections::HashMap::new();
         params.insert("thinking_effort".to_string(), json!("high"));
-        let model_config = ModelConfigParams {
-            model_name: "o3-mini",
-            thinking_effort: Some(ThinkingEffort::High),
-            temperature: None,
-            max_tokens: Some(1024),
-            request_params: Some(&params),
-        };
-        let request = create_request(
-            model_config,
-            "system",
-            &[],
-            &[],
-            &ImageFormat::OpenAi,
-            false,
-        )?;
+        let request =
+            OpenAIRequestBuilder::new("o3-mini", "system", &[], &[], &ImageFormat::OpenAi)
+                .with_thinking_effort(Some(ThinkingEffort::High))
+                .with_max_tokens(Some(1024))
+                .with_request_params(Some(&params))
+                .with_streaming(false)
+                .build()?;
         let obj = request.as_object().unwrap();
         let expected = json!({
             "model": "o3-mini",
@@ -3006,13 +2998,6 @@ data: [DONE]"#;
 
     #[test]
     fn test_create_request_preserves_reasoning_content_for_legacy_compat() -> anyhow::Result<()> {
-        let model_config = ModelConfigParams {
-            model_name: "deepseek-reasoner",
-            thinking_effort: None,
-            temperature: None,
-            max_tokens: Some(1024),
-            request_params: None,
-        };
         let message = Message::assistant()
             .with_content(MessageContent::thinking("preserve this", ""))
             .with_tool_request(
@@ -3021,14 +3006,16 @@ data: [DONE]"#;
                     .with_arguments(rmcp::object!({}))),
             );
 
-        let request = create_request(
-            model_config,
+        let request = OpenAIRequestBuilder::new(
+            "deepseek-reasoner",
             "system",
             &[message],
             &[],
             &ImageFormat::OpenAi,
-            true,
-        )?;
+        )
+        .with_max_tokens(Some(1024))
+        .with_streaming(true)
+        .build()?;
 
         assert_eq!(request["messages"][1]["reasoning_content"], "preserve this");
 

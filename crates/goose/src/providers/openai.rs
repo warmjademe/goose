@@ -20,10 +20,9 @@ use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::errors::ProviderError;
 use goose_providers::formats::openai::is_openai_responses_model;
 use goose_providers::formats::openai::{
-    create_request_with_options, get_usage, response_to_message, OpenAiFormatOptions,
+    get_usage, response_to_message, OpenAIRequestBuilder, OpenAiFormatOptions,
 };
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use reqwest::StatusCode;
 use std::collections::HashMap;
 
@@ -834,23 +833,22 @@ impl Provider for OpenAiProvider {
                 Ok(super::base::stream_from_single_message(message, usage))
             }
         } else {
-            let payload = create_request_with_options(
-                ModelConfigParams {
-                    model_name: model_config.model_name.as_str(),
-                    thinking_effort: model_config.thinking_effort(),
-                    temperature: model_config.temperature,
-                    max_tokens: model_config.max_tokens,
-                    request_params: model_config.request_params.as_ref(),
-                },
+            let payload = OpenAIRequestBuilder::new(
+                model_config.model_name.as_str(),
                 system,
                 messages,
                 tools,
                 &ImageFormat::OpenAi,
-                self.supports_streaming,
-                OpenAiFormatOptions {
-                    preserve_thinking_context: self.preserve_thinking_context,
-                },
-            )?;
+            )
+            .with_thinking_effort(model_config.thinking_effort())
+            .with_temperature(model_config.temperature)
+            .with_max_tokens(model_config.max_tokens)
+            .with_request_params(model_config.request_params.as_ref())
+            .with_streaming(self.supports_streaming)
+            .with_format_options(OpenAiFormatOptions {
+                preserve_thinking_context: self.preserve_thinking_context,
+            })
+            .build()?;
             let payload = self.sanitize_request_for_compat(payload);
             let mut log = RequestLog::start(model_config, &payload)?;
 

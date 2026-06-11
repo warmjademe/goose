@@ -24,7 +24,7 @@ use std::borrow::Cow;
 use uuid::Uuid;
 
 pub use goose_providers::formats::openai::{
-    create_request, format_messages, format_tools, get_usage, validate_tool_schemas,
+    format_messages, format_tools, get_usage, validate_tool_schemas, OpenAIRequestBuilder,
 };
 
 /// Parse XML-style tool calls from content (Ollama/Qwen3-coder fallback format).

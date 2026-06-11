@@ -41,9 +41,8 @@ use crate::providers::base::DEFAULT_PROVIDER_TIMEOUT_SECS;
 use anyhow::Result;
 use futures::StreamExt;
 use goose_providers::errors::ProviderError;
-use goose_providers::formats::openai::create_request;
+use goose_providers::formats::openai::OpenAIRequestBuilder;
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use reqwest::Client;
 use rmcp::model::{object, CallToolRequestParams, RawContent, Tool};
 use serde_json::{json, Value};
@@ -697,20 +696,19 @@ impl OllamaInterpreter {
             .map_err(|e| ProviderError::RequestFailed(format!("Model config error: {e}")))?
             .with_canonical_limits("ollama");
 
-        let mut payload = create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let mut payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             system_prompt,
             &messages,
             &[], // No tools
             &ImageFormat::OpenAi,
-            false,
-        )?;
+        )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(false)
+        .build()?;
 
         payload["stream"] = json!(false); // needed for the /api/chat endpoint to work
         payload["format"] = format_schema;

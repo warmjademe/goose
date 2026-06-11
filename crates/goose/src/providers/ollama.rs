@@ -10,7 +10,9 @@ use super::utils::RequestLog;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
 use crate::conversation::message::Message;
 use crate::model::ModelConfig;
-use crate::providers::formats::ollama::{create_request, response_to_streaming_message_ollama};
+use crate::providers::formats::ollama::{
+    response_to_streaming_message_ollama, OpenAIRequestBuilder,
+};
 use anyhow::{Error, Result};
 use async_stream::try_stream;
 use async_trait::async_trait;
@@ -18,7 +20,6 @@ use futures::future::BoxFuture;
 use futures::TryStreamExt;
 use goose_providers::errors::ProviderError;
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use reqwest::Response;
 use rmcp::model::Tool;
 use serde_json::{json, Value};
@@ -320,20 +321,19 @@ impl Provider for OllamaProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let mut payload = create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let mut payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             system,
             messages,
             tools,
             &ImageFormat::OpenAi,
-            true,
-        )?;
+        )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(true)
+        .build()?;
         apply_ollama_options(&mut payload, model_config);
         let mut log = RequestLog::start(model_config, &payload)?;
 
@@ -565,27 +565,24 @@ mod tests {
 
     #[test]
     fn test_raw_create_request_contains_unsupported_ollama_fields() {
-        use crate::providers::formats::ollama::create_request;
-
         let model_config = ModelConfig::new("llama3.1")
             .unwrap()
             .with_max_tokens(Some(4096));
         let messages = vec![crate::conversation::message::Message::user().with_text("hi")];
 
-        let payload = create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             "You are a helpful assistant.",
             &messages,
             &[],
             &ImageFormat::OpenAi,
-            true,
         )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(true)
+        .build()
         .unwrap();
 
         assert!(
@@ -600,8 +597,6 @@ mod tests {
 
     #[test]
     fn test_apply_ollama_options_preserves_stream_options_by_default() {
-        use crate::providers::formats::ollama::create_request;
-
         let _guard = env_lock::lock_env([
             ("GOOSE_INPUT_LIMIT", None::<&str>),
             ("OLLAMA_STREAM_USAGE", None::<&str>),
@@ -611,20 +606,19 @@ mod tests {
             .with_max_tokens(Some(4096));
         let messages = vec![crate::conversation::message::Message::user().with_text("hi")];
 
-        let mut payload = create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let mut payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             "You are a helpful assistant.",
             &messages,
             &[],
             &ImageFormat::OpenAi,
-            true,
         )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(true)
+        .build()
         .unwrap();
 
         apply_ollama_options(&mut payload, &model_config);
@@ -650,8 +644,6 @@ mod tests {
 
     #[test]
     fn test_apply_ollama_options_strips_stream_options_when_disabled() {
-        use crate::providers::formats::ollama::create_request;
-
         let _guard = env_lock::lock_env([
             ("GOOSE_INPUT_LIMIT", None::<&str>),
             ("OLLAMA_STREAM_USAGE", Some("false")),
@@ -661,20 +653,19 @@ mod tests {
             .with_max_tokens(Some(4096));
         let messages = vec![crate::conversation::message::Message::user().with_text("hi")];
 
-        let mut payload = create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let mut payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             "You are a helpful assistant.",
             &messages,
             &[],
             &ImageFormat::OpenAi,
-            true,
         )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(true)
+        .build()
         .unwrap();
 
         apply_ollama_options(&mut payload, &model_config);

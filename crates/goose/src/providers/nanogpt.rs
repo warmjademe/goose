@@ -9,9 +9,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use goose_providers::errors::ProviderError;
-use goose_providers::formats::openai::create_request;
+use goose_providers::formats::openai::OpenAIRequestBuilder;
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use rmcp::model::Tool;
 
 pub const NANOGPT_PROVIDER_NAME: &str = "nano-gpt";
@@ -176,20 +175,19 @@ impl Provider for NanoGptProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let payload = create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        let payload = OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             system,
             messages,
             tools,
             &ImageFormat::OpenAi,
-            true,
-        )?;
+        )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(true)
+        .build()?;
 
         let mut log = RequestLog::start(model_config, &payload)?;
 

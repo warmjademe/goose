@@ -3,7 +3,6 @@ use async_stream::try_stream;
 use futures::TryStreamExt;
 use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use reqwest::Response;
 #[cfg(test)]
 use reqwest::StatusCode;
@@ -22,7 +21,7 @@ use crate::model::ModelConfig;
 use crate::providers::formats::openai_responses::responses_api_to_streaming_message;
 use goose_providers::errors::ProviderError;
 use goose_providers::formats::openai::{
-    create_request, get_usage, response_to_message, response_to_streaming_message,
+    get_usage, response_to_message, response_to_streaming_message, OpenAIRequestBuilder,
 };
 use rmcp::model::Tool;
 
@@ -65,20 +64,19 @@ impl OpenAiCompatibleProvider {
         tools: &[Tool],
         for_streaming: bool,
     ) -> Result<Value, ProviderError> {
-        create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+        OpenAIRequestBuilder::new(
+            model_config.model_name.as_str(),
             system,
             messages,
             tools,
             &ImageFormat::OpenAi,
-            for_streaming,
         )
+        .with_thinking_effort(model_config.thinking_effort())
+        .with_temperature(model_config.temperature)
+        .with_max_tokens(model_config.max_tokens)
+        .with_request_params(model_config.request_params.as_ref())
+        .with_streaming(for_streaming)
+        .build()
         .map_err(|e| ProviderError::RequestFailed(format!("Failed to create request: {}", e)))
     }
 }

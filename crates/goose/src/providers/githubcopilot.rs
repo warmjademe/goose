@@ -11,7 +11,6 @@ use chrono::{DateTime, Utc};
 use goose_providers::errors::ProviderError;
 use goose_providers::formats::openai::is_openai_responses_model;
 use goose_providers::images::ImageFormat;
-use goose_providers::models::ModelConfigParams;
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,7 +31,7 @@ use super::formats::openai_responses::create_responses_request;
 use super::openai_compatible::handle_response_openai_compat;
 use super::retry::ProviderRetry;
 use super::utils::{get_model, RequestLog};
-use goose_providers::formats::openai::{create_request, get_usage, response_to_message};
+use goose_providers::formats::openai::{get_usage, response_to_message, OpenAIRequestBuilder};
 
 use crate::config::{Config, ConfigError};
 use crate::conversation::message::{Message, MessageContent};
@@ -444,20 +443,19 @@ impl GithubCopilotProvider {
             .any(|prefix| model_config.model_name.starts_with(prefix));
 
         if supports_streaming {
-            let payload = create_request(
-                ModelConfigParams {
-                    model_name: model_config.model_name.as_str(),
-                    thinking_effort: model_config.thinking_effort(),
-                    temperature: model_config.temperature,
-                    max_tokens: model_config.max_tokens,
-                    request_params: model_config.request_params.as_ref(),
-                },
+            let payload = OpenAIRequestBuilder::new(
+                model_config.model_name.as_str(),
                 system,
                 messages,
                 tools,
                 &ImageFormat::OpenAi,
-                true,
-            )?;
+            )
+            .with_thinking_effort(model_config.thinking_effort())
+            .with_temperature(model_config.temperature)
+            .with_max_tokens(model_config.max_tokens)
+            .with_request_params(model_config.request_params.as_ref())
+            .with_streaming(true)
+            .build()?;
             let mut log = RequestLog::start(model_config, &payload)?;
 
             let response = self
@@ -486,20 +484,19 @@ impl GithubCopilotProvider {
             } else {
                 Some(session_id)
             };
-            let payload = create_request(
-                ModelConfigParams {
-                    model_name: model_config.model_name.as_str(),
-                    thinking_effort: model_config.thinking_effort(),
-                    temperature: model_config.temperature,
-                    max_tokens: model_config.max_tokens,
-                    request_params: model_config.request_params.as_ref(),
-                },
+            let payload = OpenAIRequestBuilder::new(
+                model_config.model_name.as_str(),
                 system,
                 messages,
                 tools,
                 &ImageFormat::OpenAi,
-                false,
-            )?;
+            )
+            .with_thinking_effort(model_config.thinking_effort())
+            .with_temperature(model_config.temperature)
+            .with_max_tokens(model_config.max_tokens)
+            .with_request_params(model_config.request_params.as_ref())
+            .with_streaming(false)
+            .build()?;
             let mut log = RequestLog::start(model_config, &payload)?;
 
             let response = self
