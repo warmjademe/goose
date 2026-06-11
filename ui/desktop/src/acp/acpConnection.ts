@@ -5,7 +5,10 @@ import {
 } from '@aaif/goose-sdk';
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 import packageJson from '../../package.json';
-import { publishAcpSessionUpdate, publishGooseSessionUpdate } from './chatNotifications';
+import {
+  routeAcpGooseSessionNotification,
+  routeAcpSessionNotification,
+} from './chatNotifications';
 import { createWebSocketStream } from './createWebSocketStream';
 
 let clientPromise: Promise<GooseClient> | null = null;
@@ -20,12 +23,8 @@ function createClientCallbacks(): () => GooseClientCallbacks {
         },
       };
     },
-    sessionUpdate: async (notification) => {
-      publishAcpSessionUpdate(notification);
-    },
-    unstable_sessionUpdate: async (notification) => {
-      publishGooseSessionUpdate(notification);
-    },
+    sessionUpdate: routeAcpSessionNotification,
+    unstable_sessionUpdate: routeAcpGooseSessionNotification,
   });
 }
 
