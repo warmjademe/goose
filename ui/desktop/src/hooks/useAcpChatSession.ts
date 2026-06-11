@@ -382,7 +382,7 @@ const i18n = defineMessages({
   },
 });
 
-export function useChatStream({
+export function useAcpChatSession({
   sessionId,
   onStreamFinish,
   onSessionLoaded,
