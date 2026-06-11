@@ -34,7 +34,7 @@ import {
   subscribeToAcpGooseSession,
   subscribeToAcpSession,
 } from '../acp/chatNotifications';
-import { acpPromptSession } from '../acp/prompt';
+import { acpCancelPrompt, acpPromptSession } from '../acp/prompt';
 import {
   createAcpSessionNotificationAdapter,
   type AcpChatUpdate,
@@ -1089,6 +1089,10 @@ export function useAcpChatSession({
         body: { request_id: requestId },
       }).catch((e) => {
         console.warn('Failed to cancel request:', e);
+      });
+    } else if (requestSessionId) {
+      acpCancelPrompt(requestSessionId).catch((e) => {
+        console.warn('Failed to cancel ACP prompt:', e);
       });
     }
 
