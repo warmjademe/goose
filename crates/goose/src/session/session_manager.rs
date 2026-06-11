@@ -2762,6 +2762,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_same_second_messages_keep_insertion_order() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+
+        let session = sm
+            .create_session(
+                PathBuf::from("/tmp/test"),
+                "ordering".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+
+        // Tool request (assistant) and tool response (user) sharing the same
+        // second must retain insertion order: request before response.
+        let created = 1_700_000_000;
+        sm.add_message(
+            &session.id,
+            &Message {
+                id: Some("req".to_string()),
+                role: Role::Assistant,
+                created,
+                content: vec![MessageContent::text("tool request")],
+                metadata: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+        sm.add_message(
+            &session.id,
+            &Message {
+                id: Some("resp".to_string()),
+                role: Role::User,
+                created,
+                content: vec![MessageContent::text("tool response")],
+                metadata: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let conversation = sm
+            .get_session(&session.id, true)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        let messages = conversation.messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, Role::Assistant);
+        assert_eq!(messages[1].role, Role::User);
+    }
+
+    #[tokio::test]
     async fn test_list_sessions_filters_by_type() {
         let temp_dir = TempDir::new().unwrap();
         let sm = SessionManager::new(temp_dir.path().to_path_buf());

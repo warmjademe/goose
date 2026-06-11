@@ -2135,10 +2135,19 @@ impl Agent {
                                                 request.metadata.as_ref(),
                                                 request.tool_meta.clone(),
                                             );
-                                        messages_to_add.push(request_msg);
                                         let final_response = request_to_response_map
                                             .remove(&request.id)
                                             .unwrap_or_else(|| Message::user().with_generated_id());
+
+                                        // The response placeholder is created before tools run, so its
+                                        // timestamp is earlier than the request message built afterwards.
+                                        // Session retrieval orders by (created_timestamp, id); align the
+                                        // request to the response's second so the insertion-order id
+                                        // tiebreaker keeps the request ahead of its response. Otherwise the
+                                        // response can sort first and providers reject the tool_use ordering.
+                                        request_msg.created = request_msg.created.min(final_response.created);
+
+                                        messages_to_add.push(request_msg);
                                         yield AgentEvent::Message(final_response.clone());
                                         messages_to_add.push(final_response);
                                     } else {
