@@ -1939,12 +1939,57 @@ impl SessionStorage {
 
     async fn truncate_conversation(&self, session_id: &str, timestamp: i64) -> Result<()> {
         let pool = self.pool().await?;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
         sqlx::query("DELETE FROM messages WHERE session_id = ? AND created_timestamp >= ?")
             .bind(session_id)
             .bind(timestamp)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
+        let rows = sqlx::query_as::<_, (String, String, i64, Option<String>, Option<String>)>(
+            "SELECT role, content_json, created_timestamp, metadata_json, message_id \
+             FROM messages \
+             WHERE session_id = ? \
+             ORDER BY created_timestamp DESC, id DESC",
+        )
+        .bind(session_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        let mut snippet = None;
+        for (role_str, content_json, created_timestamp, metadata_json, message_id) in
+            rows.into_iter()
+        {
+            let role = match role_str.as_str() {
+                "user" => Role::User,
+                "assistant" => Role::Assistant,
+                _ => continue,
+            };
+
+            let content = serde_json::from_str(&content_json)?;
+            let metadata = metadata_json
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default();
+
+            let mut message = Message::new(role, created_timestamp, content);
+            message.metadata = metadata;
+            if let Some(id) = message_id {
+                message = message.with_id(id);
+            }
+            snippet = message_snippet(&message, LAST_MESSAGE_SNIPPET_MAX_CHARS);
+            if snippet.is_some() {
+                break;
+            }
+        }
+
+        sqlx::query("UPDATE sessions SET last_message_snippet = ? WHERE id = ?")
+            .bind(snippet)
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -3220,6 +3265,11 @@ mod tests {
             .last_message_snippet
     }
 
+    fn message_at(mut message: Message, created: i64) -> Message {
+        message.created = created;
+        message
+    }
+
     #[test]
     fn test_message_snippet_collapses_whitespace_and_truncates() {
         use rmcp::model::CallToolRequestParams;
@@ -3332,6 +3382,68 @@ mod tests {
             snippet_of(&sm, &id).await.as_deref(),
             Some("assistant reply here")
         );
+    }
+
+    #[tokio::test]
+    async fn test_last_message_snippet_recomputed_on_truncate_conversation() {
+        use rmcp::model::CallToolRequestParams;
+
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let id = snippet_session(&sm).await;
+
+        let previous = message_at(Message::user().with_text("previous remaining text"), 1_000);
+        let tool = message_at(
+            Message::assistant().with_tool_request("t1", Ok(CallToolRequestParams::new("shell"))),
+            2_000,
+        );
+        let latest = message_at(
+            Message::assistant().with_text("latest text to remove"),
+            3_000,
+        );
+
+        sm.add_message(&id, &previous).await.unwrap();
+        sm.add_message(&id, &tool).await.unwrap();
+        sm.add_message(&id, &latest).await.unwrap();
+
+        assert_eq!(
+            snippet_of(&sm, &id).await.as_deref(),
+            Some("latest text to remove")
+        );
+
+        sm.truncate_conversation(&id, 3_000).await.unwrap();
+
+        assert_eq!(
+            snippet_of(&sm, &id).await.as_deref(),
+            Some("previous remaining text")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_last_message_snippet_cleared_on_truncate_without_text_messages() {
+        use rmcp::model::CallToolRequestParams;
+
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let id = snippet_session(&sm).await;
+
+        let tool = message_at(
+            Message::assistant().with_tool_request("t1", Ok(CallToolRequestParams::new("shell"))),
+            500,
+        );
+        let text = message_at(Message::user().with_text("only text to remove"), 1_000);
+
+        sm.add_message(&id, &tool).await.unwrap();
+        sm.add_message(&id, &text).await.unwrap();
+
+        assert_eq!(
+            snippet_of(&sm, &id).await.as_deref(),
+            Some("only text to remove")
+        );
+
+        sm.truncate_conversation(&id, 1_000).await.unwrap();
+
+        assert_eq!(snippet_of(&sm, &id).await, None);
     }
 
     #[tokio::test]
