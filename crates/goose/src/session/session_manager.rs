@@ -19,9 +19,11 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 13;
+pub const CURRENT_SCHEMA_VERSION: i32 = 14;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
+
+const LAST_MESSAGE_SNIPPET_MAX_CHARS: usize = 128;
 
 #[derive(
     Debug,
@@ -86,6 +88,8 @@ pub struct Session {
     pub archived_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub last_message_snippet: Option<String>,
 }
 
 impl Session {
@@ -568,6 +572,31 @@ pub(crate) fn role_to_string(role: &Role) -> &'static str {
     }
 }
 
+/// Build a bounded, single-line snippet from a message's real text content.
+///
+/// `Message::as_concat_text` yields only `Text` parts, so tool-request,
+/// tool-response, thinking, and image-only messages collapse to an empty
+/// string and return `None`. Internal whitespace and newlines are collapsed to
+/// single spaces, and the result is capped at `max_chars` characters (a
+/// trailing `…` marks truncation) so it can be rendered verbatim by clients.
+fn message_snippet(message: &Message, max_chars: usize) -> Option<String> {
+    let text = message.as_concat_text();
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let mut chars = normalized.chars();
+    let mut result: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        // trim a trailing space so we never produce "word …"
+        let end = result.trim_end().len();
+        result.truncate(end);
+        result.push('…');
+    }
+    Some(result)
+}
+
 impl Default for Session {
     fn default() -> Self {
         Self {
@@ -596,6 +625,7 @@ impl Default for Session {
             goose_mode: GooseMode::default(),
             archived_at: None,
             project_id: None,
+            last_message_snippet: None,
         }
     }
 }
@@ -668,6 +698,7 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
                 .unwrap_or_default(),
             archived_at: row.try_get("archived_at").ok(),
             project_id: row.try_get("project_id").ok().flatten(),
+            last_message_snippet: row.try_get("last_message_snippet").ok().flatten(),
         })
     }
 }
@@ -785,7 +816,8 @@ impl SessionStorage {
                 model_config_json TEXT,
                 goose_mode TEXT NOT NULL DEFAULT 'auto',
                 archived_at TIMESTAMP,
-                project_id TEXT
+                project_id TEXT,
+                last_message_snippet TEXT
             )
         "#,
         )
@@ -1220,6 +1252,19 @@ impl SessionStorage {
                         .await?;
                 }
             }
+            14 => {
+                let has_last_message_snippet = sqlx::query_scalar::<_, i32>(
+                    "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'last_message_snippet'",
+                )
+                .fetch_one(&mut **tx)
+                .await?
+                    > 0;
+                if !has_last_message_snippet {
+                    sqlx::query("ALTER TABLE sessions ADD COLUMN last_message_snippet TEXT")
+                        .execute(&mut **tx)
+                        .await?;
+                }
+            }
             _ => {
                 anyhow::bail!("Unknown migration version: {}", version);
             }
@@ -1283,7 +1328,7 @@ impl SessionStorage {
                accumulated_cost,
                schedule_id, recipe_json, user_recipe_values_json,
                provider_name, model_config_json, goose_mode,
-               archived_at, project_id
+               archived_at, project_id, last_message_snippet
         FROM sessions
         WHERE id = ?
     "#,
@@ -1507,10 +1552,23 @@ impl SessionStorage {
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query("UPDATE sessions SET updated_at = datetime('now') WHERE id = ?")
-            .bind(session_id)
-            .execute(&mut *tx)
-            .await?;
+        match message_snippet(message, LAST_MESSAGE_SNIPPET_MAX_CHARS) {
+            Some(snippet) => {
+                sqlx::query(
+                    "UPDATE sessions SET updated_at = datetime('now'), last_message_snippet = ? WHERE id = ?",
+                )
+                .bind(snippet)
+                .bind(session_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            None => {
+                sqlx::query("UPDATE sessions SET updated_at = datetime('now') WHERE id = ?")
+                    .bind(session_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
 
         tx.commit().await?;
         Ok(())
@@ -1551,6 +1609,18 @@ impl SessionStorage {
             .execute(&mut *tx)
             .await?;
         }
+
+        let snippet = conversation
+            .messages()
+            .iter()
+            .rev()
+            .find_map(|message| message_snippet(message, LAST_MESSAGE_SNIPPET_MAX_CHARS));
+
+        sqlx::query("UPDATE sessions SET last_message_snippet = ? WHERE id = ?")
+            .bind(snippet)
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
 
         tx.commit().await?;
         Ok(())
@@ -1616,7 +1686,7 @@ impl SessionStorage {
                    s.accumulated_cost,
                    s.schedule_id, s.recipe_json, s.user_recipe_values_json,
                    s.provider_name, s.model_config_json, s.goose_mode,
-                   s.archived_at, s.project_id,
+                   s.archived_at, s.project_id, s.last_message_snippet,
                    COUNT(m.id) as message_count
             FROM sessions s
             {}
@@ -2987,5 +3057,298 @@ mod tests {
 
         let acp_session = sm.storage().get_session("acp_id", false).await.unwrap();
         assert_eq!(acp_session.session_type, SessionType::Acp);
+    }
+
+    /// Builds a `sessions` DB whose table predates `last_message_snippet` and
+    /// stamps `schema_version` at `version`. `create_schema` can't produce this
+    /// fixture — it always declares every modern column — so the pre-snippet
+    /// shape is spelled out explicitly.
+    async fn seed_pre_snippet_sessions_db(db_path: &Path, version: i32) {
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        let pool = SqlitePoolOptions::new()
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(db_path)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO schema_version (version) VALUES (?)")
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                user_set_name BOOLEAN DEFAULT FALSE,
+                session_type TEXT NOT NULL DEFAULT 'user',
+                working_dir TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                extension_data TEXT DEFAULT '{}',
+                total_tokens INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                accumulated_total_tokens INTEGER,
+                accumulated_input_tokens INTEGER,
+                accumulated_output_tokens INTEGER,
+                accumulated_cost REAL,
+                schedule_id TEXT,
+                recipe_json TEXT,
+                user_recipe_values_json TEXT,
+                provider_name TEXT,
+                model_config_json TEXT,
+                goose_mode TEXT NOT NULL DEFAULT 'auto',
+                archived_at TIMESTAMP,
+                project_id TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT,
+                session_id TEXT NOT NULL REFERENCES sessions(id),
+                role TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                created_timestamp INTEGER NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                tokens INTEGER,
+                metadata_json TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO sessions (id, name, user_set_name, session_type, working_dir, extension_data, goose_mode)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("legacy_id")
+        .bind("Legacy Session")
+        .bind(false)
+        .bind("user")
+        .bind("/tmp")
+        .bind("{}")
+        .bind("auto")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let has_snippet = sqlx::query_scalar::<_, i32>(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'last_message_snippet'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(has_snippet, 0, "fixture must not have last_message_snippet");
+
+        pool.close().await;
+    }
+
+    /// The SELECTs in `list_sessions_matching` and `get_session` both name
+    /// `s.last_message_snippet` explicitly. Before the fix, opening a DB whose
+    /// table lacked the column made them fail with `no such column:
+    /// last_message_snippet`. After the fix the column has been added (by the
+    /// v14 migration), so both succeed.
+    async fn assert_snippet_queries_succeed(sm: &SessionManager) {
+        let sessions = sm
+            .storage()
+            .list_sessions_matching(SessionListQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].last_message_snippet, None);
+
+        let session = sm.get_session("legacy_id", false).await.unwrap();
+        assert_eq!(session.last_message_snippet, None);
+
+        let has_column = sqlx::query_scalar::<_, i32>(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'last_message_snippet'",
+        )
+        .fetch_one(sm.storage().pool().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(has_column, 1);
+    }
+
+    #[tokio::test]
+    async fn test_snippet_migration_upgrades_v13_db() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join(SESSIONS_FOLDER).join(DB_NAME);
+        seed_pre_snippet_sessions_db(&db_path, 13).await;
+
+        // 13 < 14: the loop runs v14 and adds the column.
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        assert_snippet_queries_succeed(&sm).await;
+    }
+
+    async fn snippet_session(sm: &SessionManager) -> String {
+        sm.create_session(
+            PathBuf::from("/tmp/snippet"),
+            "Snippet session".to_string(),
+            SessionType::User,
+            GooseMode::default(),
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    async fn snippet_of(sm: &SessionManager, id: &str) -> Option<String> {
+        sm.get_session(id, false)
+            .await
+            .unwrap()
+            .last_message_snippet
+    }
+
+    #[test]
+    fn test_message_snippet_collapses_whitespace_and_truncates() {
+        use rmcp::model::CallToolRequestParams;
+
+        let collapsed = Message::user().with_text("  hello\n\nworld\t  again  ");
+        assert_eq!(
+            message_snippet(&collapsed, 20).as_deref(),
+            Some("hello world again")
+        );
+
+        let exact = Message::user().with_text("one two three four x");
+        assert_eq!(
+            message_snippet(&exact, 20).as_deref(),
+            Some("one two three four x")
+        );
+
+        let long = Message::user().with_text("abcde fghij klmno p qrstuv");
+        assert_eq!(
+            message_snippet(&long, 20).as_deref(),
+            Some("abcde fghij klmno p…")
+        );
+
+        let blob = Message::user().with_text("x".repeat(5000));
+        let s = message_snippet(&blob, 20).unwrap();
+        assert_eq!(s.chars().count(), 21);
+        assert!(s.ends_with('…'));
+
+        let tool =
+            Message::assistant().with_tool_request("t1", Ok(CallToolRequestParams::new("shell")));
+        assert_eq!(message_snippet(&tool, 20), None);
+
+        let thinking = Message::assistant().with_thinking("internal reasoning", "sig");
+        assert_eq!(message_snippet(&thinking, 20), None);
+    }
+
+    #[tokio::test]
+    async fn test_last_message_snippet_set_on_text_append() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let id = snippet_session(&sm).await;
+
+        assert_eq!(snippet_of(&sm, &id).await, None);
+
+        sm.add_message(&id, &Message::user().with_text("hello there world"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            snippet_of(&sm, &id).await.as_deref(),
+            Some("hello there world")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_last_message_snippet_unchanged_by_tool_messages() {
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let id = snippet_session(&sm).await;
+
+        sm.add_message(&id, &Message::user().with_text("real text message"))
+            .await
+            .unwrap();
+        sm.add_message(
+            &id,
+            &Message::assistant().with_tool_request("t1", Ok(CallToolRequestParams::new("shell"))),
+        )
+        .await
+        .unwrap();
+        sm.add_message(
+            &id,
+            &Message::user().with_tool_response(
+                "t1",
+                Ok(CallToolResult::success(vec![Content::text("done")])),
+            ),
+        )
+        .await
+        .unwrap();
+        sm.add_message(&id, &Message::assistant().with_thinking("pondering", "sig"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            snippet_of(&sm, &id).await.as_deref(),
+            Some("real text message")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_last_message_snippet_recomputed_on_replace_conversation() {
+        use rmcp::model::CallToolRequestParams;
+
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let id = snippet_session(&sm).await;
+
+        sm.add_message(&id, &Message::user().with_text("stale original message"))
+            .await
+            .unwrap();
+
+        let conversation = Conversation::new_unvalidated(vec![
+            Message::user().with_text("first user prompt"),
+            Message::assistant().with_text("assistant reply here"),
+            Message::assistant().with_tool_request("t1", Ok(CallToolRequestParams::new("shell"))),
+        ]);
+        sm.replace_conversation(&id, &conversation).await.unwrap();
+
+        assert_eq!(
+            snippet_of(&sm, &id).await.as_deref(),
+            Some("assistant reply here")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_last_message_snippet_null_without_text_messages() {
+        use rmcp::model::CallToolRequestParams;
+
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let id = snippet_session(&sm).await;
+
+        sm.add_message(
+            &id,
+            &Message::assistant().with_tool_request("t1", Ok(CallToolRequestParams::new("shell"))),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snippet_of(&sm, &id).await, None);
     }
 }
