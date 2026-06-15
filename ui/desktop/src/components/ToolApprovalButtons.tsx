@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { confirmToolAction, Permission } from '../api';
 import { resolveAcpPermissionRequest } from '../acp/permissionRequests';
+import { USE_ACP_CHAT } from '../acpChatFeatureFlag';
 import { defineMessages, useIntl } from '../i18n';
 
 const i18n = defineMessages({
@@ -76,13 +77,20 @@ export default function ToolApprovalButtons({ data }: { data: ToolApprovalData }
   }, [id, decision, isClicked]);
 
   const handleAction = async (action: Permission) => {
-    setDecision(action);
-    setIsClicked(true);
-
     try {
-      if (resolveAcpPermissionRequest(sessionId, id, action)) {
+      if (USE_ACP_CHAT) {
+        if (!resolveAcpPermissionRequest(sessionId, id, action)) {
+          console.error('No pending ACP permission request found', { sessionId, id });
+          return;
+        }
+
+        setDecision(action);
+        setIsClicked(true);
         return;
       }
+
+      setDecision(action);
+      setIsClicked(true);
 
       const response = await confirmToolAction({
         body: {
