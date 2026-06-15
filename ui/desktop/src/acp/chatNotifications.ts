@@ -7,7 +7,15 @@ const gooseSessionRouter =
   createSessionScopedNotificationRouter<GooseSessionNotification_unstable>();
 
 export const subscribeToAcpSession = acpSessionRouter.subscribe;
-export const routeAcpSessionNotification = acpSessionRouter.route;
+export const routeAcpSessionNotification = async (
+  notification: SessionNotification
+): Promise<void> => {
+  await acpSessionRouter.route(notification);
+};
 
 export const subscribeToAcpGooseSession = gooseSessionRouter.subscribe;
-export const routeAcpGooseSessionNotification = gooseSessionRouter.route;
+export const routeAcpGooseSessionNotification = async (
+  notification: GooseSessionNotification_unstable
+): Promise<void> => {
+  await gooseSessionRouter.route(notification);
+};

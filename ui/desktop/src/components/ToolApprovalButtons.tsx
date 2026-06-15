@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { confirmToolAction, Permission } from '../api';
+import { resolveAcpPermissionRequest } from '../acp/permissionRequests';
 import { defineMessages, useIntl } from '../i18n';
 
 const i18n = defineMessages({
@@ -79,6 +80,10 @@ export default function ToolApprovalButtons({ data }: { data: ToolApprovalData }
     setIsClicked(true);
 
     try {
+      if (resolveAcpPermissionRequest(sessionId, id, action)) {
+        return;
+      }
+
       const response = await confirmToolAction({
         body: {
           sessionId,

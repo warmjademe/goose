@@ -42,13 +42,14 @@ export function createSessionScopedNotificationRouter<
     };
   };
 
-  const route = async (notification: TNotification): Promise<void> => {
+  const route = async (notification: TNotification): Promise<boolean> => {
     const listeners = listenersBySessionId.get(notification.sessionId);
     if (!listeners) {
-      return;
+      return false;
     }
 
     await Promise.all([...listeners].map((listener) => listener(notification)));
+    return true;
   };
 
   return {

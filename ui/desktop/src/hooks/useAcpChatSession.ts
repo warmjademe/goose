@@ -30,10 +30,11 @@ import { showExtensionLoadResults } from '../utils/extensionErrorUtils';
 import { maybeHandlePlatformEvent } from '../utils/platform_events';
 import { useSessionEvents, type SessionEvent } from './useSessionEvents';
 import type { UseChatSessionParams, UseChatSessionResult } from './useChatSessionTypes';
+import { subscribeToAcpGooseSession, subscribeToAcpSession } from '../acp/chatNotifications';
 import {
-  subscribeToAcpGooseSession,
-  subscribeToAcpSession,
-} from '../acp/chatNotifications';
+  cancelAcpPermissionRequestsForSession,
+  subscribeToAcpPermissionRequests,
+} from '../acp/permissionRequests';
 import { acpCancelPrompt, acpPromptSession } from '../acp/prompt';
 import {
   createAcpSessionNotificationAdapter,
@@ -464,10 +465,16 @@ export function useAcpChatSession({
     const unsubscribeGoose = subscribeToAcpGooseSession(sessionId, (notification) => {
       dispatchAcpChatUpdates(acpAdapterRef.current.applyGoose(notification));
     });
+    const unsubscribePermissionRequests = subscribeToAcpPermissionRequests(sessionId, (request) => {
+      dispatchAcpChatUpdates(acpAdapterRef.current.applyPermissionRequest(request));
+      dispatch({ type: 'SET_CHAT_STATE', payload: ChatState.WaitingForUserInput });
+    });
 
     return () => {
       unsubscribeAcp();
       unsubscribeGoose();
+      unsubscribePermissionRequests();
+      cancelAcpPermissionRequestsForSession(sessionId);
     };
   }, [dispatchAcpChatUpdates, sessionId]);
 
@@ -1091,6 +1098,7 @@ export function useAcpChatSession({
         console.warn('Failed to cancel request:', e);
       });
     } else if (requestSessionId) {
+      cancelAcpPermissionRequestsForSession(requestSessionId);
       acpCancelPrompt(requestSessionId).catch((e) => {
         console.warn('Failed to cancel ACP prompt:', e);
       });
