@@ -27,7 +27,7 @@ use tracing::warn;
 fn user_profile_enabled() -> bool {
     crate::config::Config::global()
         .get_param::<bool>("GOOSE_USER_PROFILE_ENABLED")
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 async fn enhance_model_error(error: ProviderError, provider: &Arc<dyn Provider>) -> ProviderError {

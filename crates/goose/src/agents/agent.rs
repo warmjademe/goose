@@ -1569,7 +1569,7 @@ impl Agent {
         if was_plain_user_turn
             && Config::global()
                 .get_param::<bool>("GOOSE_CHAT_RECALL_AUTO")
-                .unwrap_or(false)
+                .unwrap_or(true)
         {
             if let Ok(provider) = self.provider().await {
                 let current_session_type = session_manager
@@ -1763,7 +1763,7 @@ impl Agent {
 
         if Config::global()
             .get_param::<bool>("GOOSE_USER_PROFILE_ENABLED")
-            .unwrap_or(false)
+            .unwrap_or(true)
         {
             let provider = provider.clone();
             let manager_for_spawn = session_manager.clone();
