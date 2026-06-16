@@ -4,6 +4,7 @@ use futures::future::BoxFuture;
 use futures::Stream;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
+use goose_providers::thinking::ThinkingEffort;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -503,7 +504,9 @@ pub trait Provider: Send + Sync {
         tools: &[Tool],
     ) -> Result<(Message, ProviderUsage), ProviderError> {
         let model_config = self.get_model_config();
-        let fast_config = model_config.use_fast_model();
+        let fast_config = model_config
+            .use_fast_model()
+            .with_thinking_effort(ThinkingEffort::Off);
 
         let result = self
             .complete(&fast_config, session_id, system, messages, tools)
@@ -519,7 +522,8 @@ pub trait Provider: Send + Sync {
                         e,
                         model_config.model_name
                     );
-                    self.complete(&model_config, session_id, system, messages, tools)
+                    let fallback_config = model_config.with_thinking_effort(ThinkingEffort::Off);
+                    self.complete(&fallback_config, session_id, system, messages, tools)
                         .await
                 } else {
                     Err(e)
