@@ -1,5 +1,5 @@
 use std::sync::OnceLock;
-use tokio::process::Command;\n#[cfg(windows)] use crate::windows_job;\n#[cfg(windows)] use crate::windows_job::{init_windows_cleanup, ensure_job_object, attach_pid_to_job};
+use tokio::process::Command;\n#[cfg(windows)]\nuse crate::windows_job;\n#[cfg(windows)]\nuse crate::windows_job::{init_windows_cleanup, ensure_job_object, attach_pid_to_job};
 
 
 #[cfg(windows)]
