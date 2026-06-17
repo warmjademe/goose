@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
-use tokio::process::Command;
+use tokio::process::Command;\n#[cfg(windows)] use crate::windows_job;\n#[cfg(windows)] use crate::windows_job::{init_windows_cleanup, ensure_job_object, attach_pid_to_job};
+
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
