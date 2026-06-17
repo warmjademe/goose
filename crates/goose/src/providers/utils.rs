@@ -2,12 +2,13 @@ use crate::config::paths::Paths;
 use anyhow::{anyhow, Result};
 use fs_err::File;
 use goose_providers::errors::{GoogleErrorCode, ProviderError};
-use goose_providers::request_log::{RequestLogHandle, RequestLogger};
+use goose_providers::request_log::{install_logger, RequestLogHandle, RequestLogger};
 use reqwest::{Response, StatusCode};
 use serde_json::Value;
 use std::error::Error;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -212,6 +213,16 @@ fn unescape_json_values_in_place(value: &mut Value) {
 }
 
 pub const LOGS_TO_KEEP: usize = 10;
+
+static INIT_LOGGER: OnceLock<Result<()>> = OnceLock::new();
+
+pub fn init_goose_request_log() -> Result<()> {
+    INIT_LOGGER
+        .get_or_init(|| Ok(install_logger(RequestLog::new(LOGS_TO_KEEP)?)?))
+        .as_ref()
+        .map_err(|e| anyhow::anyhow!("failed to set up logger: {}", e))?;
+    Ok(())
+}
 
 pub struct RequestLog {
     logs_to_keep: usize,
