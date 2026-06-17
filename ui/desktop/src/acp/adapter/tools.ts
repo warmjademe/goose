@@ -5,6 +5,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import type { CallToolResponse, ContentBlock as ApiContentBlock, Message } from '../../api';
 import { findMessageForChunk } from './messages';
+import { toolNotificationChange } from './toolNotifications';
 import {
   type AcpChatStateChange,
   type AdapterState,
@@ -55,10 +56,11 @@ export function applyToolCallUpdate(
   update: ToolCallUpdate
 ): AcpChatStateChange[] {
   if (update.status !== 'completed' && update.status !== 'failed') {
-    return [];
+    const notificationChange = toolNotificationChange(update);
+    return notificationChange ? [notificationChange] : [];
   }
 
-  if (hasToolResponse(state, update.toolCallId)) {
+  if (hasExistingToolResponseForToolCall(state, update.toolCallId)) {
     return messagesChange(state);
   }
 
@@ -124,7 +126,7 @@ function getOrCreateToolResponseMessageForUpdate(
   return message;
 }
 
-function hasToolResponse(state: AdapterState, toolCallId: string): boolean {
+function hasExistingToolResponseForToolCall(state: AdapterState, toolCallId: string): boolean {
   return state.messages.some((message) =>
     message.content.some((content) => content.type === 'toolResponse' && content.id === toolCallId)
   );

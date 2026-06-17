@@ -131,6 +131,8 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
                 session: state.session ? { ...state.session, name: update.name } : undefined,
               }
             : state;
+        case 'notification':
+          return { ...state, notifications: [...state.notifications, update.notification] };
       }
       return state;
     }

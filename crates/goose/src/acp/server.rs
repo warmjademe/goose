@@ -14,7 +14,8 @@ use crate::agents::extension_manager::TRUSTED_TOOL_UPDATE_META_KEY;
 use crate::agents::mcp_client::{GooseMcpHostInfo, McpClientTrait};
 use crate::agents::platform_extensions::developer::DeveloperClient;
 use crate::agents::{
-    Agent, AgentConfig, ExtensionConfig, ExtensionLoadResult, GoosePlatform, SessionConfig,
+    Agent, AgentConfig, AgentEvent, ExtensionConfig, ExtensionLoadResult, GoosePlatform,
+    SessionConfig,
 };
 use crate::config::base::CONFIG_YAML_NAME;
 use crate::config::extensions::get_enabled_extensions_with_config;
@@ -95,6 +96,7 @@ mod onboarding;
 mod providers;
 mod resources;
 mod sources;
+mod tool_notifications;
 mod tools;
 
 pub type AcpProviderFactory = Arc<
@@ -2448,7 +2450,7 @@ impl GooseAcpAgent {
             }
 
             match event {
-                Ok(crate::agents::AgentEvent::Message(message)) => {
+                Ok(AgentEvent::Message(message)) => {
                     // Agent persists messages via session_manager.add_message() internally.
                     let stored_message_id = message.id.clone();
 
@@ -2515,6 +2517,16 @@ impl GooseAcpAgent {
                     }
                     if stream_error.is_some() {
                         break;
+                    }
+                }
+                Ok(AgentEvent::McpNotification((request_id, notification))) => {
+                    if let Some(update) =
+                        tool_notifications::tool_notification_update(request_id, notification)
+                    {
+                        cx.send_notification(SessionNotification::new(
+                            args.session_id.clone(),
+                            update,
+                        ))?;
                     }
                 }
                 Ok(_) => {}
