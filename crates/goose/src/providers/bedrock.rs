@@ -530,8 +530,7 @@ impl BedrockProvider {
         log.write(
             &serde_json::to_value(&message).unwrap_or_default(),
             Some(&usage),
-        )
-        .map_err(anyhow::Error::from)?;
+        )?;
 
         let provider_usage = ProviderUsage::new(model_name.to_string(), usage);
         Ok(super::base::stream_from_single_message(
@@ -811,7 +810,7 @@ impl Provider for BedrockProvider {
             "messages": messages,
             "tools": tools
         });
-        let mut log = start_log(&self.model, &debug_payload).map_err(anyhow::Error::from)?;
+        let mut log = start_log(&self.model, &debug_payload)?;
 
         let mut event_stream = response.stream;
 
