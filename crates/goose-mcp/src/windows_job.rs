@@ -6,7 +6,9 @@
 pub type HANDLE = *mut std::ffi::c_void;
 
 #[cfg(windows)]
-pub fn ensure_job_object() -> Option<HANDLE> { None }
+pub fn ensure_job_object() -> Option<HANDLE> {
+    None
+}
 
 #[cfg(windows)]
 pub fn attach_pid_to_job(_pid: u32) {}
@@ -15,4 +17,6 @@ pub fn attach_pid_to_job(_pid: u32) {}
 pub fn init_windows_cleanup() {}
 
 #[cfg(windows)]
-pub fn windows_cleanup_enabled() -> bool { false }
+pub fn windows_cleanup_enabled() -> bool {
+    false
+}
