@@ -42,12 +42,19 @@ mod windows_impl {
 
             let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let _ = SetInformationJobObject(
+            let set_res = SetInformationJobObject(
                 job,
                 JobObjectExtendedLimitInformation,
                 &mut info as *mut _ as *mut _,
                 size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             );
+            if set_res == FALSE {
+                // If we fail to configure the job object to terminate on close, do not publish
+                // this handle. Cleaning up here avoids mutating global state with a partially
+                // configured Job Object.
+                CloseHandle(job);
+                return None;
+            }
 
             // Publish the handle, but if another thread won the race, close ours.
             match JOB_HANDLE.compare_exchange(0, job as usize, Ordering::AcqRel, Ordering::Acquire)
