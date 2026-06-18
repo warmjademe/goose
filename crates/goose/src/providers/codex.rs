@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use futures::future::BoxFuture;
+use goose_providers::base::ConfigKey;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::thinking::ThinkingEffort;
 use serde_json::json;
@@ -15,7 +16,6 @@ use tokio::process::Command;
 
 use super::base::{MessageStream, Provider, ProviderDef, ProviderMetadata};
 use super::utils::filter_extensions_from_system_prompt;
-use crate::config::base::{CodexCommand, CodexSkipGitCheck};
 use crate::config::paths::Paths;
 use crate::config::search_path::SearchPaths;
 use crate::config::{Config, ExtensionConfig, GooseMode};
@@ -628,8 +628,8 @@ impl ProviderDef for CodexProvider {
             CODEX_KNOWN_MODELS.to_vec(),
             CODEX_DOC_URL,
             vec![
-                provider_config_key_from_value::<CodexCommand>(true, false, true),
-                provider_config_key_from_value::<CodexSkipGitCheck>(false, false, true),
+                ConfigKey::new("CODEX_COMMAND", true, false, Some("codex"),true),
+                ConfigKey::new("CODEX_SKIP_GIT_CHECK", false, false, Some("false"),true),
             ],
         )
     }

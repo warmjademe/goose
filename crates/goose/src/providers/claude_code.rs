@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use goose_providers::base::ConfigKey;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use rmcp::model::{Role, Tool};
@@ -22,7 +23,6 @@ use super::base::{
     ProviderMetadata,
 };
 use super::utils::filter_extensions_from_system_prompt;
-use crate::config::base::{provider_config_key_from_value, ClaudeCodeCommand};
 use crate::config::paths::Paths;
 use crate::config::search_path::SearchPaths;
 use crate::config::{Config, ExtensionConfig, GooseMode};
@@ -595,9 +595,7 @@ impl ProviderDef for ClaudeCodeProvider {
             // Only a few agentic choices; fetched dynamically via fetch_supported_models.
             vec![],
             CLAUDE_CODE_DOC_URL,
-            vec![provider_config_key_from_value::<ClaudeCodeCommand>(
-                true, false, true,
-            )],
+            vec![ConfigKey::new("CLAUDE_CODE_COMMAND", true, false, Some("claude"),true)],
         )
     }
 
