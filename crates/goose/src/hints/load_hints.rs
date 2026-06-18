@@ -443,6 +443,34 @@ mod tests {
         assert!(!hints.contains("Project Hints"));
     }
 
+    // New test: ensure symlinked hints files are ignored (prevents boundary bypass)
+    #[test]
+    fn test_symlinked_hints_are_ignored() {
+        use std::fs;
+        use tempfile::TempDir;
+        use std::os::unix::fs::symlink as unix_symlink;
+
+        // Create a temp directory without any git root
+        let root = TempDir::new().unwrap();
+        let dir = root.path();
+        // Create a real secret file somewhere else
+        let secret = root.path().join("secret.txt");
+        fs::write(&secret, "SECRET_CONTENT").unwrap();
+        // Create a symlink in the project hints pointing to the secret
+        let symlink_path = dir.join(GOOSE_HINTS_FILENAME);
+        // On non-Unix platforms, this test may not run; skip if symlink creation not supported
+        if unix_symlink(&secret, &symlink_path).is_err() {
+            // If cannot create symlink, just skip this test
+            return;
+        }
+
+        // Load hints now; since the hints file is a symlink, it should be ignored and produce no hints
+        let gitignore = create_dummy_gitignore();
+        let hints = load_hint_files(dir, &[GOOSE_HINTS_FILENAME.to_string()], &gitignore);
+
+        assert!(hints.is_empty(), "symlinked hints should be ignored and produce no local hints");
+    }
+
     #[test]
     fn test_goosehints_multiple_filenames() {
         let dir = TempDir::new().unwrap();
