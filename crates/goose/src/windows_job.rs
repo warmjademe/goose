@@ -21,7 +21,7 @@ mod windows_impl {
     use winapi::um::winbase::SetInformationJobObject;
     use winapi::um::winnt::{
         JobObjectExtendedLimitInformation, HANDLE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, PROCESS_SET_INFORMATION, PROCESS_TERMINATE,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
     };
 
     // HANDLE (*mut c_void) is not Send/Sync, so we store the handle as a usize
@@ -74,9 +74,14 @@ mod windows_impl {
             None => return,
         };
         unsafe {
-            let proc = OpenProcess(PROCESS_TERMINATE | PROCESS_SET_INFORMATION, FALSE, pid);
+            // AssignProcessToJobObject requires PROCESS_SET_QUOTA in addition to
+            // PROCESS_TERMINATE; without it the assignment fails and the child is
+            // never tied to the job, leaving it orphaned on exit.
+            let proc = OpenProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, FALSE, pid);
             if !proc.is_null() {
-                let _ = AssignProcessToJobObject(job, proc);
+                if AssignProcessToJobObject(job, proc) == FALSE {
+                    tracing::warn!(pid, "failed to assign child process to Windows job object");
+                }
                 CloseHandle(proc);
             }
         }
