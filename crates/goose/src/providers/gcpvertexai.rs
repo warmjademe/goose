@@ -15,22 +15,22 @@ use tokio_util::io::StreamReader;
 use url::Url;
 
 use crate::conversation::message::Message;
-use crate::model::ModelConfig;
 use crate::providers::base::{
     ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata,
     DEFAULT_PROVIDER_TIMEOUT_SECS,
 };
+use goose_providers::model::ModelConfig;
 
-use crate::providers::errors::ProviderError;
 use crate::providers::formats::gcpvertexai::{
     create_request, response_to_streaming_message, GcpLocation, ModelProvider, RequestContext,
     DEFAULT_MODEL, KNOWN_MODELS,
 };
 use crate::providers::gcpauth::GcpAuth;
-use crate::providers::openai_compatible::map_http_error_to_provider_error;
+use crate::providers::openai_compatible::{map_http_error_to_provider_error, sanitize_url};
 use crate::providers::retry::RetryConfig;
 use crate::providers::utils::RequestLog;
 use crate::session_context::SESSION_ID_HEADER;
+use goose_providers::errors::ProviderError;
 use rmcp::model::Tool;
 
 const GCP_VERTEX_AI_PROVIDER_NAME: &str = "gcp_vertex_ai";
@@ -284,6 +284,7 @@ impl GcpVertexAIProvider {
         let mut overloaded_attempts = 0;
         let mut last_error = None;
         let max_retries = self.retry_config.max_retries;
+        let mut retried_auth = false;
 
         loop {
             if rate_limit_attempts > max_retries && overloaded_attempts > max_retries {
@@ -295,10 +296,21 @@ impl GcpVertexAIProvider {
                 );
             }
 
-            let auth_header = self
-                .get_auth_header()
-                .await
-                .map_err(|e| ProviderError::Authentication(e.to_string()))?;
+            let auth_header = match self.get_auth_header().await {
+                Ok(header) => header,
+                Err(e) => {
+                    if !retried_auth {
+                        retried_auth = true;
+                        if self.auth.refresh_credentials().await.is_ok() {
+                            tracing::info!(
+                                "gcloud token exchange failed ({e}); reloaded credentials and retrying"
+                            );
+                            continue;
+                        }
+                    }
+                    return Err(ProviderError::Authentication(e.to_string()));
+                }
+            };
 
             let mut request = self
                 .client
@@ -355,13 +367,25 @@ impl GcpVertexAIProvider {
             } else if status == StatusCode::OK {
                 return Ok(response);
             } else if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+                if !retried_auth {
+                    retried_auth = true;
+                    if let Err(e) = self.auth.refresh_credentials().await {
+                        tracing::warn!("Failed to reload gcloud credentials after {status}: {e}");
+                    } else {
+                        tracing::info!(
+                            "Vertex AI returned {status}; reloaded gcloud credentials and retrying"
+                        );
+                        continue;
+                    }
+                }
                 return Err(ProviderError::Authentication(format!(
                     "Authentication failed with status: {status}"
                 )));
             } else {
+                let url = sanitize_url(response.url().as_str());
                 let response_text = response.text().await.unwrap_or_default();
                 let payload = serde_json::from_str::<Value>(&response_text).ok();
-                return Err(map_http_error_to_provider_error(status, payload));
+                return Err(map_http_error_to_provider_error(status, payload, &url));
             }
         }
     }
@@ -617,8 +641,7 @@ impl Provider for GcpVertexAIProvider {
             let mut message_stream = response_to_streaming_message(framed, &context_clone);
 
             while let Some(message) = message_stream.next().await {
-                let (message, usage) = message
-                    .map_err(|e| ProviderError::RequestFailed(format!("Stream decode error: {}", e)))?;
+                let (message, usage) = message.map_err(ProviderError::from_stream_error)?;
                 log.write(&message, usage.as_ref().map(|u| &u.usage))?;
                 yield (message, usage);
             }

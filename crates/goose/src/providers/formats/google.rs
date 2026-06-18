@@ -1,8 +1,9 @@
-use crate::model::ModelConfig;
-use crate::providers::base::Usage;
-use crate::providers::errors::ProviderError;
-use crate::providers::utils::{is_valid_function_name, sanitize_function_name};
 use anyhow::Result;
+use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
+use goose_providers::errors::ProviderError;
+use goose_providers::formats::openai::{is_valid_function_name, sanitize_function_name};
+use goose_providers::model::ModelConfig;
+use goose_providers::thinking::ThinkingEffort;
 use rmcp::model::{
     object, AnnotateAble, CallToolRequestParams, ErrorCode, ErrorData, RawContent, Role, Tool,
 };
@@ -359,12 +360,7 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
 
 pub fn response_to_streaming_message<S>(
     mut stream: S,
-) -> impl futures::Stream<
-    Item = anyhow::Result<(
-        Option<Message>,
-        Option<crate::providers::base::ProviderUsage>,
-    )>,
-> + 'static
+) -> impl futures::Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
     S: futures::Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
 {
@@ -372,7 +368,7 @@ where
     use futures::StreamExt;
 
     try_stream! {
-        let mut final_usage: Option<crate::providers::base::ProviderUsage> = None;
+        let mut final_usage: Option<ProviderUsage> = None;
         let mut last_signature: Option<String> = None;
         let stream_id = Uuid::new_v4().to_string();
         let mut incomplete_data: Option<String> = None;
@@ -437,7 +433,9 @@ where
                     .get("status")
                     .and_then(|s| s.as_str())
                     .unwrap_or("UNKNOWN");
-                Err(anyhow::anyhow!("Google API error ({}): {}", status, message))?;
+                Err::<(), ProviderError>(ProviderError::RequestFailed(format!(
+                    "Google API error ({status}): {message}"
+                )))?;
             }
 
             if let Ok(usage) = get_usage(&chunk) {
@@ -446,7 +444,7 @@ where
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    final_usage = Some(crate::providers::base::ProviderUsage::new(model, usage));
+                    final_usage = Some(ProviderUsage::new(model, usage));
                 }
             }
 
@@ -542,22 +540,17 @@ fn get_thinking_config(model_config: &ModelConfig) -> Option<ThinkingConfig> {
     }
 
     if is_gemini_3 {
-        let thinking_level_str = model_config
-            .get_config_param::<String>("thinking_level", "GEMINI3_THINKING_LEVEL")
-            .map(|s| s.to_lowercase())
-            .unwrap_or_else(|| "low".to_string());
-
-        let thinking_level = match thinking_level_str.as_str() {
-            "high" => ThinkingLevel::High,
-            "low" => ThinkingLevel::Low,
-            invalid => {
-                tracing::warn!(
-                    "Invalid thinking level '{}' for model '{}'. Valid levels: low, high. Using 'low'.",
-                    invalid,
-                    model_config.model_name,
-                );
+        let effort = model_config
+            .thinking_effort()
+            .unwrap_or(ThinkingEffort::Off);
+        if effort == ThinkingEffort::Off {
+            return None;
+        }
+        let thinking_level = match effort {
+            ThinkingEffort::Off | ThinkingEffort::Low | ThinkingEffort::Medium => {
                 ThinkingLevel::Low
             }
+            ThinkingEffort::High | ThinkingEffort::Max => ThinkingLevel::High,
         };
 
         Some(ThinkingConfig {
@@ -567,8 +560,12 @@ fn get_thinking_config(model_config: &ModelConfig) -> Option<ThinkingConfig> {
         })
     } else {
         let thinking_budget = match model_config
-            .get_config_param::<i32>("thinking_budget", "GEMINI25_THINKING_BUDGET")
-        {
+            .request_param::<i32>("thinking_budget")
+            .or_else(|| {
+                crate::config::Config::global()
+                    .get_param("GEMINI25_THINKING_BUDGET")
+                    .ok()
+            }) {
             Some(budget) if budget >= 0 => budget,
             Some(budget) => {
                 tracing::warn!(
@@ -1376,9 +1373,13 @@ data: [DONE]"#;
 
     #[test]
     fn test_get_thinking_config() {
-        use crate::model::ModelConfig;
+        use goose_providers::model::ModelConfig;
 
-        let config = ModelConfig::new("gemini-3-pro").unwrap();
+        // Test 1: Gemini 3 model with low thinking effort
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), serde_json::json!("low"));
+        let mut config = ModelConfig::new("gemini-3-pro").unwrap();
+        config.request_params = Some(params);
         let result = get_thinking_config(&config);
         assert!(result.is_some());
         let thinking_config = result.unwrap();
@@ -1386,9 +1387,18 @@ data: [DONE]"#;
         assert!(thinking_config.thinking_budget.is_none());
         assert!(thinking_config.include_thoughts);
 
-        let config = ModelConfig::new("Gemini-3-Flash").unwrap();
+        // Test 2: Gemini 3 model with high thinking effort
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), serde_json::json!("high"));
+        let mut config = ModelConfig::new("Gemini-3-Flash").unwrap();
+        config.request_params = Some(params);
         let result = get_thinking_config(&config);
         assert!(result.is_some());
+        let thinking_config = result.unwrap();
+        assert!(matches!(
+            thinking_config.thinking_level,
+            Some(ThinkingLevel::High)
+        ));
 
         let config = ModelConfig::new("gemini-2.5-flash").unwrap();
         let result = get_thinking_config(&config);
@@ -1405,7 +1415,7 @@ data: [DONE]"#;
         params.insert("thinking_budget".to_string(), json!(4096));
         let config = ModelConfig::new("gemini-2.5-flash")
             .unwrap()
-            .with_request_params(Some(params));
+            .with_merged_request_params(params);
         let result = get_thinking_config(&config);
         assert!(result.is_some());
         let thinking_config = result.unwrap();
@@ -1415,7 +1425,7 @@ data: [DONE]"#;
         params.insert("thinking_budget".to_string(), json!(-1));
         let config = ModelConfig::new("gemini-2.5-flash")
             .unwrap()
-            .with_request_params(Some(params));
+            .with_merged_request_params(params);
         let result = get_thinking_config(&config);
         assert!(result.is_some());
         let thinking_config = result.unwrap();

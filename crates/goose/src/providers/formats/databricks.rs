@@ -1,12 +1,17 @@
 use crate::conversation::message::{Message, MessageContent};
-use crate::model::ModelConfig;
-use crate::providers::formats::anthropic::{thinking_effort, thinking_type, ThinkingType};
-use crate::providers::utils::{
-    convert_image, detect_image_path, extract_reasoning_effort, is_openai_responses_model,
-    is_valid_function_name, load_image_file, safely_parse_json, sanitize_function_name,
-    ImageFormat,
+use crate::providers::formats::anthropic::{
+    adaptive_output_effort, model_supports_temperature, thinking_budget_tokens,
+    thinking_type_for_provider, ThinkingType,
 };
+use goose_providers::model::ModelConfig;
+
 use anyhow::{anyhow, Error};
+use goose_providers::formats::openai::{
+    extract_reasoning_effort, is_openai_responses_model, is_valid_function_name,
+    openai_reasoning_effort_for_thinking, sanitize_function_name,
+};
+use goose_providers::images::{convert_image, detect_image_path, load_image_file, ImageFormat};
+use goose_providers::json::safely_parse_json;
 use rmcp::model::{
     object, AnnotateAble, CallToolRequestParams, Content, ErrorCode, ErrorData, RawContent,
     ResourceContents, Role, Tool,
@@ -14,6 +19,8 @@ use rmcp::model::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::borrow::Cow;
+
+pub(crate) const DATABRICKS_PROVIDER_NAME: &str = "databricks";
 
 #[derive(Serialize)]
 struct DatabricksMessage {
@@ -122,6 +129,8 @@ fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<Data
         let mut content_array = Vec::new();
         let mut has_tool_calls = false;
         let mut has_multiple_content = false;
+        // Deferred so all tool-role messages stay consecutive (required by Claude via Databricks).
+        let mut pending_image_messages: Vec<DatabricksMessage> = Vec::new();
 
         for content in &message.content {
             match content {
@@ -188,7 +197,13 @@ fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<Data
                     }
                 }
                 MessageContent::ToolResponse(response) => {
-                    result.extend(format_tool_response(response, image_format));
+                    for msg in format_tool_response(response, image_format) {
+                        if msg.role == "user" {
+                            pending_image_messages.push(msg);
+                        } else {
+                            result.push(msg);
+                        }
+                    }
                 }
                 MessageContent::Image(image) => {
                     content_array.push(convert_image(image, image_format));
@@ -210,6 +225,8 @@ fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<Data
             }
         }
 
+        result.extend(pending_image_messages);
+
         if !content_array.is_empty() {
             converted.content = if content_array.len() == 1
                 && !has_multiple_content
@@ -229,15 +246,19 @@ fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<Data
     result
 }
 
-fn apply_claude_thinking_config(payload: &mut Value, model_config: &ModelConfig) {
+fn apply_claude_thinking_config(
+    payload: &mut Value,
+    provider_name: &str,
+    model_config: &ModelConfig,
+) {
     let obj = payload.as_object_mut().unwrap();
 
-    match thinking_type(model_config) {
+    match thinking_type_for_provider(provider_name, model_config) {
         ThinkingType::Adaptive => {
             obj.insert("thinking".to_string(), json!({ "type": "adaptive" }));
             obj.insert(
                 "output_config".to_string(),
-                json!({ "effort": thinking_effort(model_config).to_string() }),
+                json!({ "effort": adaptive_output_effort(model_config).to_string() }),
             );
             obj.insert(
                 "max_completion_tokens".to_string(),
@@ -245,11 +266,7 @@ fn apply_claude_thinking_config(payload: &mut Value, model_config: &ModelConfig)
             );
         }
         ThinkingType::Enabled => {
-            let budget_tokens = model_config
-                .get_config_param::<i32>("budget_tokens", "CLAUDE_THINKING_BUDGET")
-                .unwrap_or(16000)
-                .max(1024);
-
+            let budget_tokens = thinking_budget_tokens(model_config);
             let max_tokens = model_config.max_output_tokens() + budget_tokens;
             obj.insert("max_tokens".to_string(), json!(max_tokens));
             obj.insert(
@@ -262,8 +279,10 @@ fn apply_claude_thinking_config(payload: &mut Value, model_config: &ModelConfig)
             obj.insert("temperature".to_string(), json!(2));
         }
         ThinkingType::Disabled => {
-            if let Some(temp) = model_config.temperature {
-                obj.insert("temperature".to_string(), json!(temp));
+            if model_supports_temperature(provider_name, model_config) {
+                if let Some(temp) = model_config.temperature {
+                    obj.insert("temperature".to_string(), json!(temp));
+                }
             }
             obj.insert(
                 "max_completion_tokens".to_string(),
@@ -576,14 +595,41 @@ pub fn create_request(
     tools: &[Tool],
     image_format: &ImageFormat,
 ) -> anyhow::Result<Value, Error> {
+    create_request_for_provider(
+        DATABRICKS_PROVIDER_NAME,
+        model_config,
+        system,
+        messages,
+        tools,
+        image_format,
+    )
+}
+
+pub fn create_request_for_provider(
+    provider_name: &str,
+    model_config: &ModelConfig,
+    system: &str,
+    messages: &[Message],
+    tools: &[Tool],
+    image_format: &ImageFormat,
+) -> anyhow::Result<Value, Error> {
     if model_config.model_name.starts_with("o1-mini") {
         return Err(anyhow!(
             "o1-mini model is not currently supported since goose uses tool calling and o1-mini does not support it. Please use o1 or o3 models instead."
         ));
     }
 
-    let (model_name, reasoning_effort) = extract_reasoning_effort(&model_config.model_name);
+    let (model_name, legacy_reasoning_effort) = extract_reasoning_effort(&model_config.model_name);
     let is_openai_reasoning_model = is_openai_responses_model(&model_name);
+    let reasoning_effort = if is_openai_reasoning_model {
+        model_config
+            .thinking_effort()
+            .map_or(legacy_reasoning_effort, |effort| {
+                openai_reasoning_effort_for_thinking(&model_name, effort)
+            })
+    } else {
+        None
+    };
 
     let system_message = DatabricksMessage {
         role: "system".to_string(),
@@ -625,10 +671,10 @@ pub fn create_request(
     }
 
     if is_claude_model(&model_config.model_name) {
-        apply_claude_thinking_config(&mut payload, model_config);
+        apply_claude_thinking_config(&mut payload, provider_name, model_config);
     } else {
         // open ai reasoning models currently don't support temperature
-        if !is_openai_reasoning_model {
+        if !is_openai_reasoning_model && model_supports_temperature(provider_name, model_config) {
             if let Some(temp) = model_config.temperature {
                 payload
                     .as_object_mut()
@@ -652,6 +698,9 @@ pub fn create_request(
     if let Some(params) = &model_config.request_params {
         if let Some(obj) = payload.as_object_mut() {
             for (key, value) in params {
+                if key == "thinking_effort" {
+                    continue;
+                }
                 obj.insert(key.clone(), value.clone());
             }
         }
@@ -1042,19 +1091,63 @@ mod tests {
 
     #[test]
     fn test_create_request_reasoning_effort() -> anyhow::Result<()> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), serde_json::json!("high"));
         let model_config = ModelConfig {
-            model_name: "o3-mini-high".to_string(),
+            model_name: "o3-mini".to_string(),
             context_limit: Some(4096),
             temperature: None,
             max_tokens: Some(1024),
             toolshim: false,
             toolshim_model: None,
             fast_model_config: None,
-            request_params: None,
+            request_params: Some(params),
             reasoning: None,
         };
         let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
         assert_eq!(request["reasoning_effort"], "high");
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_off_effort_preserves_none() -> anyhow::Result<()> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), serde_json::json!("off"));
+        let model_config = ModelConfig {
+            model_name: "databricks-o3-mini".to_string(),
+            context_limit: Some(4096),
+            temperature: None,
+            max_tokens: Some(1024),
+            toolshim: false,
+            toolshim_model: None,
+            fast_model_config: None,
+            request_params: Some(params),
+            reasoning: None,
+        };
+        let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
+        assert_eq!(request["reasoning_effort"], "none");
+        assert!(request.get("thinking_effort").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_max_effort_uses_supported_level() -> anyhow::Result<()> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), serde_json::json!("max"));
+        let model_config = ModelConfig {
+            model_name: "databricks-gpt-5.2-pro".to_string(),
+            context_limit: Some(4096),
+            temperature: None,
+            max_tokens: Some(1024),
+            toolshim: false,
+            toolshim_model: None,
+            fast_model_config: None,
+            request_params: Some(params),
+            reasoning: None,
+        };
+        let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
+        assert_eq!(request["reasoning_effort"], "high");
+        assert!(request.get("thinking_effort").is_none());
         Ok(())
     }
 
@@ -1117,15 +1210,11 @@ mod tests {
 
     #[test]
     fn test_create_request_adaptive_thinking_for_46_models() -> anyhow::Result<()> {
-        let _guard = env_lock::lock_env([
-            ("CLAUDE_THINKING_TYPE", Some("adaptive")),
-            ("CLAUDE_THINKING_EFFORT", Some("low")),
-            ("CLAUDE_THINKING_ENABLED", None::<&str>),
-            ("CLAUDE_THINKING_BUDGET", None::<&str>),
-        ]);
-
         let mut model_config = ModelConfig::new_or_fail("databricks-claude-opus-4-6");
         model_config.max_tokens = Some(4096);
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), serde_json::json!("low"));
+        model_config.request_params = Some(params);
 
         let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
 
@@ -1139,27 +1228,89 @@ mod tests {
     }
 
     #[test]
-    fn test_create_request_enabled_thinking_with_budget() -> anyhow::Result<()> {
-        let _guard = env_lock::lock_env([
-            ("CLAUDE_THINKING_TYPE", None::<&str>),
-            ("CLAUDE_THINKING_ENABLED", None::<&str>),
-            ("CLAUDE_THINKING_BUDGET", Some("10000")),
-        ]);
+    fn test_create_request_adaptive_thinking_for_new_anthropic_models() -> anyhow::Result<()> {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
 
+        for name in [
+            "databricks-claude-opus-4-7",
+            "databricks-claude-opus-4-8",
+            "databricks-claude-fable-5",
+            "global.anthropic.claude-fable-5",
+        ] {
+            let mut model_config = ModelConfig::new_or_fail(name);
+            model_config.max_tokens = Some(4096);
+            let mut params = std::collections::HashMap::new();
+            params.insert("thinking_effort".to_string(), serde_json::json!("high"));
+            model_config.request_params = Some(params);
+
+            let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
+
+            assert_eq!(request["thinking"]["type"], "adaptive", "{name}");
+            assert!(request.get("temperature").is_none(), "{name}");
+            assert_eq!(request["max_completion_tokens"], 4096, "{name}");
+            assert!(request.get("max_tokens").is_none(), "{name}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_always_on_adaptive_off_effort_falls_back_to_high() -> anyhow::Result<()>
+    {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
+        let mut model_config = ModelConfig::new_or_fail("databricks-claude-fable-5");
+        model_config.max_tokens = Some(4096);
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), serde_json::json!("off"));
+        model_config.request_params = Some(params);
+
+        let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
+
+        assert_eq!(request["thinking"]["type"], "adaptive");
+        assert_eq!(request["output_config"]["effort"], "high");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_enabled_thinking_with_budget() -> anyhow::Result<()> {
         let mut model_config = ModelConfig::new_or_fail("databricks-claude-3-7-sonnet");
         model_config.max_tokens = Some(4096);
-        model_config = model_config.with_request_params(Some(std::collections::HashMap::from([(
-            "thinking_type".to_string(),
-            json!("enabled"),
-        )])));
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), serde_json::json!("high"));
+        model_config.request_params = Some(params);
 
         let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
 
         assert_eq!(request["thinking"]["type"], "enabled");
-        assert_eq!(request["thinking"]["budget_tokens"], 10000);
-        assert_eq!(request["max_tokens"], 14096);
+        assert_eq!(request["thinking"]["budget_tokens"], 16000);
+        assert_eq!(request["max_tokens"], 20096);
         assert_eq!(request["temperature"], 2);
         assert!(request.get("max_completion_tokens").is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_enabled_thinking_budget_tracks_effort() -> anyhow::Result<()> {
+        for (effort, expected_budget) in [
+            ("low", 4000),
+            ("medium", 10000),
+            ("high", 16000),
+            ("max", 32000),
+        ] {
+            let mut model_config = ModelConfig::new_or_fail("databricks-claude-3-7-sonnet");
+            model_config.max_tokens = Some(4096);
+            let mut params = std::collections::HashMap::new();
+            params.insert("thinking_effort".to_string(), serde_json::json!(effort));
+            model_config.request_params = Some(params);
+
+            let request = create_request(&model_config, "system", &[], &[], &ImageFormat::OpenAi)?;
+
+            assert_eq!(request["thinking"]["type"], "enabled");
+            assert_eq!(request["thinking"]["budget_tokens"], expected_budget);
+            assert_eq!(request["max_tokens"], 4096 + expected_budget);
+        }
 
         Ok(())
     }
@@ -1613,6 +1764,72 @@ mod tests {
             "sig_nested"
         );
         assert_eq!(tool_call["custom_field"], "custom_value");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parallel_tool_responses_with_images_are_consecutive() -> anyhow::Result<()> {
+        // Regression: #7449 — parallel tool calls with images must keep tool messages consecutive.
+        let messages = vec![
+            Message::assistant()
+                .with_tool_request("id1", Ok(CallToolRequestParams::new("tool_a")))
+                .with_tool_request("id2", Ok(CallToolRequestParams::new("tool_b"))),
+            Message::user()
+                .with_tool_response(
+                    "id1",
+                    Ok(CallToolResult::success(vec![Content::image(
+                        "base64data1".to_string(),
+                        "image/png".to_string(),
+                    )])),
+                )
+                .with_tool_response(
+                    "id2",
+                    Ok(CallToolResult::success(vec![Content::image(
+                        "base64data2".to_string(),
+                        "image/png".to_string(),
+                    )])),
+                ),
+        ];
+
+        let as_value =
+            serde_json::to_value(format_messages(&messages, &ImageFormat::OpenAi)).unwrap();
+        let spec = as_value.as_array().unwrap();
+        let roles: Vec<&str> = spec.iter().map(|m| m["role"].as_str().unwrap()).collect();
+
+        // Without the fix this was ["assistant", "tool", "user", "tool", "user"].
+        assert_eq!(roles, vec!["assistant", "tool", "tool", "user", "user"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mixed_tool_responses_image_and_text_ordering() -> anyhow::Result<()> {
+        // Mixed case: only one tool response has an image.
+        let messages = vec![
+            Message::assistant()
+                .with_tool_request("id1", Ok(CallToolRequestParams::new("tool_a")))
+                .with_tool_request("id2", Ok(CallToolRequestParams::new("tool_b"))),
+            Message::user()
+                .with_tool_response(
+                    "id1",
+                    Ok(CallToolResult::success(vec![Content::text("text result")])),
+                )
+                .with_tool_response(
+                    "id2",
+                    Ok(CallToolResult::success(vec![Content::image(
+                        "base64data".to_string(),
+                        "image/png".to_string(),
+                    )])),
+                ),
+        ];
+
+        let as_value =
+            serde_json::to_value(format_messages(&messages, &ImageFormat::OpenAi)).unwrap();
+        let spec = as_value.as_array().unwrap();
+        let roles: Vec<&str> = spec.iter().map(|m| m["role"].as_str().unwrap()).collect();
+
+        assert_eq!(roles, vec!["assistant", "tool", "tool", "user"]);
 
         Ok(())
     }

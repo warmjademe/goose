@@ -1,22 +1,22 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use goose_providers::conversation::token_usage::ProviderUsage;
+use goose_providers::images::ImageFormat;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::api_client::{ApiClient, AuthMethod};
-use super::base::{
-    ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata, ProviderUsage,
-};
-use super::errors::ProviderError;
+use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata};
 use super::formats::snowflake::{create_request, get_usage, response_to_message};
-use super::openai_compatible::map_http_error_to_provider_error;
+use super::openai_compatible::{map_http_error_to_provider_error, sanitize_url};
 use super::retry::ProviderRetry;
-use super::utils::{get_model, ImageFormat, RequestLog};
+use super::utils::{get_model, RequestLog};
 use crate::config::ConfigError;
 use crate::conversation::message::Message;
+use goose_providers::errors::ProviderError;
 
-use crate::model::ModelConfig;
 use futures::future::BoxFuture;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 
 const SNOWFLAKE_PROVIDER_NAME: &str = "snowflake";
@@ -123,6 +123,7 @@ impl SnowflakeProvider {
             .await?;
 
         let status = response.status();
+        let url = sanitize_url(response.url().as_str());
         let payload_text: String = response.text().await.ok().unwrap_or_default();
 
         if status.is_success() {
@@ -292,7 +293,7 @@ impl SnowflakeProvider {
             Ok(answer_payload)
         } else {
             let error_json = serde_json::from_str::<Value>(&payload_text).ok();
-            Err(map_http_error_to_provider_error(status, error_json))
+            Err(map_http_error_to_provider_error(status, error_json, &url))
         }
     }
 }

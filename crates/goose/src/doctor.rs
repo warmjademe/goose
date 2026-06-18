@@ -4,12 +4,12 @@ use crate::agents::platform_extensions::developer;
 use crate::agents::ExtensionConfig;
 use crate::config::Config;
 use crate::conversation::message::Message;
-use crate::model::ModelConfig;
+use crate::providers;
 use crate::providers::base::Provider;
-use crate::providers::{self, errors::ProviderError};
 use crate::session::{
     config_path, latest_llm_log_path, latest_server_log_path, read_capped, read_tail, SystemInfo,
 };
+use goose_providers::errors::ProviderError;
 
 pub async fn run(agent: &crate::agents::Agent, session_id: &str) -> anyhow::Result<Message> {
     if let Some(msg) = ensure_working_provider(agent, session_id).await? {
@@ -141,10 +141,11 @@ async fn save_and_set(
     provider: Arc<dyn Provider>,
 ) -> anyhow::Result<()> {
     let config = Config::global();
-    config.set_goose_provider(provider.get_name()).ok();
-    config
-        .set_goose_model(&provider.get_model_config().model_name)
-        .ok();
+    crate::config::set_active_provider(
+        config,
+        provider.get_name(),
+        &provider.get_model_config().model_name,
+    )?;
     agent.update_provider(provider, session_id).await
 }
 
@@ -166,9 +167,9 @@ async fn try_create_and_test(
     provider_name: &str,
     model_name: &str,
 ) -> Result<Arc<dyn Provider>, ProviderError> {
-    let model_config = ModelConfig::new(model_name)
-        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?
-        .with_canonical_limits(provider_name);
+    let model_config =
+        crate::model_config::model_config_from_user_config(provider_name, model_name)
+            .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
 
     let provider = providers::create(provider_name, model_config, vec![])
         .await

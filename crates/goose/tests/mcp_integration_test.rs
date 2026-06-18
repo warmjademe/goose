@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::extension_manager::{ExtensionManager, ExtensionManagerCapabilities};
 use goose::agents::GoosePlatform;
-use goose::model::ModelConfig;
+use goose_providers::model::ModelConfig;
 
 use test_case::test_case;
 
@@ -21,9 +21,9 @@ use async_trait::async_trait;
 use goose::conversation::message::Message;
 use goose::providers::base::{
     stream_from_single_message, MessageStream, Provider, ProviderDef, ProviderMetadata,
-    ProviderUsage, Usage,
 };
-use goose::providers::errors::ProviderError;
+use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
+use goose_providers::errors::ProviderError;
 use once_cell::sync::Lazy;
 use std::process::Command;
 
@@ -246,6 +246,7 @@ async fn test_replayed_session(
         envs,
         env_keys: vec![],
         timeout: Some(30),
+        cwd: None,
         bundled: Some(false),
         available_tools: vec![],
     };
@@ -265,6 +266,7 @@ async fn test_replayed_session(
             mcpui: true,
             host_info: None,
         },
+        true,
     ));
 
     #[allow(clippy::redundant_closure_call)]

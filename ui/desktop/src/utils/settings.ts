@@ -28,6 +28,8 @@ export interface SessionSharingConfig {
   baseUrl: string;
 }
 
+export type LanguageSetting = 'system' | 'en' | 'es' | 'hi' | 'ja' | 'ko' | 'ru' | 'tr' | 'zh-CN';
+
 export interface Settings {
   // Desktop app settings
   showMenuBarIcon: boolean;
@@ -42,11 +44,11 @@ export interface Settings {
   // UI preferences (migrated from localStorage)
   theme: 'dark' | 'light';
   useSystemTheme: boolean;
+  language: LanguageSetting;
   responseStyle: string;
   showPricing: boolean;
   sessionSharing: SessionSharingConfig;
   seenAnnouncementIds: string[];
-  navExpandedWidth: number | null;
 }
 
 export type SettingKey = keyof Settings;
@@ -82,6 +84,7 @@ export const defaultSettings: Settings = {
   // UI preferences
   theme: 'light',
   useSystemTheme: true,
+  language: 'system',
   responseStyle: 'concise',
   showPricing: true,
   sessionSharing: {
@@ -89,7 +92,6 @@ export const defaultSettings: Settings = {
     baseUrl: '',
   },
   seenAnnouncementIds: [],
-  navExpandedWidth: null,
 };
 
 export function getKeyboardShortcuts(settings: Settings): KeyboardShortcuts {

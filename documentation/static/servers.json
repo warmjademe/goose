@@ -568,6 +568,18 @@
     ]
   },
   {
+    "id": "ophis",
+    "name": "Ophis",
+    "description": "Natural-language intent DEX aggregator with a keyless MCP server for AI agents",
+    "type": "streamable-http",
+    "url": "https://mcp.ophis.fi/mcp",
+    "link": "https://github.com/ophis-fi/ophis",
+    "installation_notes": "Streamable HTTP extension. No API key or environment variables required.",
+    "is_builtin": false,
+    "endorsed": false,
+    "environmentVariables": []
+  },
+  {
     "id": "pdf_read",
     "name": "PDF Reader",
     "description": "Read large and complex PDF documents",
@@ -845,5 +857,28 @@
     "is_builtin": false,
     "endorsed": true,
     "environmentVariables": []
-  }
+  },
+  {
+  "id": "scholar-sidekick",
+  "name": "Scholar Sidekick",
+  "description": "Resolve, format, export, and verify academic citations (DOI, PMID, ISBN, arXiv) plus retraction and open-access checks",
+  "command": "npx -y scholar-sidekick-mcp@latest",
+  "link": "https://github.com/mlava/scholar-sidekick-mcp",
+  "installation_notes": "No API key required — works anonymously on a free, rate-limited tier. Optionally set SCHOLAR_API_KEY (a free first-party ssk_ key from https://scholar-sidekick.com/account) for higher limits, or RAPIDAPI_KEY for paid tiers via RapidAPI.",
+  "is_builtin": false,
+  "endorsed": false,
+  "environmentVariables": [
+    {
+      "name": "SCHOLAR_API_KEY",
+      "description": "Optional first-party API key (ssk_) from https://scholar-sidekick.com/account; raises rate limits. Sent as Authorization: Bearer.",
+      "required": false
+    },
+    {
+      "name": "RAPIDAPI_KEY",
+      "description": "Optional RapidAPI key for paid/managed tiers; routes calls through the RapidAPI gateway.",
+      "required": false
+    }
+  ]
+}
+
 ]

@@ -7,11 +7,27 @@
 use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use goose_providers::errors::ProviderError;
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Response, StatusCode};
 use serde_json::Value;
 
-use super::errors::ProviderError;
+/// Strip credentials and sensitive query parameters from a URL for safe
+/// inclusion in error messages and logs. Drops userinfo (`user:pass@`) and
+/// all query parameters (which may contain API keys like `?key=...`).
+/// Returns the original string unchanged if it doesn't parse as a URL
+/// (e.g. a bare path like "v1/models").
+pub fn sanitize_url(raw: &str) -> String {
+    let Ok(mut url) = url::Url::parse(raw) else {
+        return raw.to_string();
+    };
+    if !url.username().is_empty() || url.password().is_some() {
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+    }
+    url.set_query(None);
+    url.to_string()
+}
 
 /// Hard cap on retry delays we'll honor from remote responses. A malformed
 /// 429 with `retry_after_seconds: 1e30` (or a far-future HTTP-date) should
@@ -91,30 +107,81 @@ fn parse_http_date(value: &str) -> Option<SystemTime> {
     None
 }
 
-fn check_context_length_exceeded(text: &str) -> bool {
-    let check_phrases = [
-        "too long",
+pub(crate) fn is_context_length_exceeded_message(text: &str) -> bool {
+    let text_lower = text.to_lowercase();
+
+    let direct_context_phrases = [
         "context length",
         "context_length_exceeded",
-        "reduce the length",
-        "token count",
-        "exceeds",
-        "exceed context limit",
-        "input length",
-        "max_tokens",
-        "decrease input length",
+        "context window",
+        "context_window_exceeded",
         "context limit",
+        "maximum context",
+        "max context",
         "maximum prompt length",
+        "max prompt length",
     ];
-    let text_lower = text.to_lowercase();
-    check_phrases
+    if direct_context_phrases
         .iter()
         .any(|phrase| text_lower.contains(phrase))
+    {
+        return true;
+    }
+
+    if text_lower.contains("reduce the length")
+        && ["message", "messages", "input", "prompt"]
+            .iter()
+            .any(|word| text_lower.contains(word))
+    {
+        return true;
+    }
+
+    if [
+        "input is too long",
+        "input too long",
+        "prompt is too long",
+        "prompt too long",
+    ]
+    .iter()
+    .any(|phrase| text_lower.contains(phrase))
+    {
+        return true;
+    }
+
+    let mentions_prompt_input_tokens = [
+        "input token",
+        "input length",
+        "prompt token",
+        "prompt length",
+        "message token",
+        "messages token",
+        "request token",
+        "total token",
+    ]
+    .iter()
+    .any(|phrase| text_lower.contains(phrase));
+    let mentions_limit = [
+        "model limit",
+        "model's limit",
+        "maximum allowed",
+        "max allowed",
+        "maximum number of tokens",
+        "token limit",
+        "tokens limit",
+    ]
+    .iter()
+    .any(|phrase| text_lower.contains(phrase));
+    let mentions_overflow = ["exceed", "too long", "too large", "over the limit"]
+        .iter()
+        .any(|phrase| text_lower.contains(phrase));
+
+    mentions_prompt_input_tokens && mentions_limit && mentions_overflow
 }
 
 pub fn map_http_error_to_provider_error(
     status: StatusCode,
     payload: Option<Value>,
+    url: &str,
 ) -> ProviderError {
     let extract_message = || -> String {
         payload
@@ -132,13 +199,14 @@ pub fn map_http_error_to_provider_error(
     let error = match status {
         StatusCode::OK => unreachable!("Should not call this function with OK status"),
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => ProviderError::Authentication(format!(
-            "Authentication failed. Status: {}. Response: {}",
+            "Authentication failed for {url}. Status: {}. Response: {}",
             status,
             extract_message()
         )),
-        StatusCode::NOT_FOUND => {
-            ProviderError::RequestFailed(format!("Resource not found (404): {}", extract_message()))
-        }
+        StatusCode::NOT_FOUND => ProviderError::RequestFailed(format!(
+            "Resource not found (404) at {url}: {}",
+            extract_message()
+        )),
         StatusCode::PAYMENT_REQUIRED => ProviderError::CreditsExhausted {
             details: extract_message(),
             top_up_url: None,
@@ -146,7 +214,7 @@ pub fn map_http_error_to_provider_error(
         StatusCode::PAYLOAD_TOO_LARGE => ProviderError::ContextLengthExceeded(extract_message()),
         StatusCode::BAD_REQUEST => {
             let payload_str = extract_message();
-            if check_context_length_exceeded(&payload_str) {
+            if is_context_length_exceeded_message(&payload_str) {
                 ProviderError::ContextLengthExceeded(payload_str)
             } else {
                 ProviderError::RequestFailed(format!("Bad request (400): {}", payload_str))
@@ -156,11 +224,13 @@ pub fn map_http_error_to_provider_error(
             details: extract_message(),
             retry_delay: None,
         },
-        _ if status.is_server_error() => {
-            ProviderError::ServerError(format!("Server error ({}): {}", status, extract_message()))
-        }
+        _ if status.is_server_error() => ProviderError::ServerError(format!(
+            "Server error ({}) at {url}: {}",
+            status,
+            extract_message()
+        )),
         _ => ProviderError::RequestFailed(format!(
-            "Request failed with status {}: {}",
+            "Request failed with status {} at {url}: {}",
             status,
             extract_message()
         )),
@@ -181,10 +251,11 @@ pub fn map_http_error_to_provider_error(
 pub async fn handle_status(response: Response) -> Result<Response, ProviderError> {
     let status = response.status();
     if !status.is_success() {
+        let url = sanitize_url(response.url().as_str());
         let headers = response.headers().clone();
         let body = response.text().await.unwrap_or_default();
         let payload = serde_json::from_str::<Value>(&body).ok();
-        let mut err = map_http_error_to_provider_error(status, payload.clone());
+        let mut err = map_http_error_to_provider_error(status, payload.clone(), &url);
         if let ProviderError::RateLimitExceeded { details, .. } = &err {
             err = ProviderError::RateLimitExceeded {
                 details: details.clone(),
@@ -320,5 +391,43 @@ mod tests {
     fn retry_after_clamps_infinite_body_seconds() {
         let payload = json!({ "error": { "metadata": { "retry_after_seconds": f64::INFINITY } } });
         assert!(extract_retry_after(&empty_headers(), Some(&payload)).is_none());
+    }
+
+    #[test]
+    fn context_length_classifier_accepts_context_window_errors() {
+        let messages = [
+            "This request exceeds the maximum context length",
+            "context_length_exceeded",
+            "context window exceeded",
+            "Input token count exceeds the maximum number of tokens allowed",
+            "Please reduce the length of the messages",
+            "prompt is too long for this model",
+        ];
+
+        for message in messages {
+            assert!(
+                is_context_length_exceeded_message(message),
+                "expected context-length match for: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn context_length_classifier_rejects_generic_bad_request_errors() {
+        let messages = [
+            "max_tokens must be less than or equal to 4096",
+            "Requested max_tokens exceeds the model output limit",
+            "Current token count exceeds your organization quota",
+            "temperature exceeds maximum allowed value",
+            "schema is too long",
+            "metadata length exceeds maximum allowed",
+        ];
+
+        for message in messages {
+            assert!(
+                !is_context_length_exceeded_message(message),
+                "expected generic bad request for: {message}"
+            );
+        }
     }
 }

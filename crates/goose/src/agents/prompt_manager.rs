@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::agents::extension::ExtensionInfo;
+use crate::agents::{extension::ExtensionInfo, moim};
 use crate::hints::load_hints::build_gitignore;
 use crate::hints::{get_context_filenames, load_hint_files, SubdirectoryHintTracker};
 use crate::{
@@ -44,6 +44,8 @@ struct SystemPromptContext {
     max_extensions: usize,
     max_tools: usize,
     code_execution_mode: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    moim_system_prompt_block: Option<String>,
 }
 
 pub struct SystemPromptBuilder<'a, M> {
@@ -152,6 +154,7 @@ impl<'a> SystemPromptBuilder<'a, PromptManager> {
             max_extensions: MAX_EXTENSIONS,
             max_tools: MAX_TOOLS,
             code_execution_mode: self.code_execution_mode,
+            moim_system_prompt_block: moim::system_prompt_block(),
         };
 
         let base_prompt = if let Some(override_prompt) = &self.manager.system_prompt_override {
@@ -224,6 +227,10 @@ impl PromptManager {
         self.system_prompt_extras.insert(key, instruction);
     }
 
+    pub fn remove_system_prompt_extra(&mut self, key: &str) {
+        self.system_prompt_extras.shift_remove(key);
+    }
+
     pub fn record_tool_arguments(
         &mut self,
         arguments: &Option<serde_json::Map<String, serde_json::Value>>,
@@ -245,6 +252,10 @@ impl PromptManager {
     /// Override the system prompt with custom text
     pub fn set_system_prompt_override(&mut self, template: String) {
         self.system_prompt_override = Some(template);
+    }
+
+    pub fn clear_system_prompt_override(&mut self) {
+        self.system_prompt_override = None;
     }
 
     pub fn builder<'a>(&'a self) -> SystemPromptBuilder<'a, Self> {
@@ -324,6 +335,29 @@ mod tests {
         assert!(result.contains("Firstinstruction"));
         assert!(result.contains("Secondinstruction"));
         assert!(result.contains("Thirdinstruction"));
+    }
+
+    #[test]
+    fn test_remove_system_prompt_extra() {
+        let mut manager = PromptManager::new();
+        manager.add_system_prompt_extra("agent".to_string(), "Agent instruction".to_string());
+        manager.add_system_prompt_extra("project".to_string(), "Project instruction".to_string());
+
+        manager.remove_system_prompt_extra("agent");
+        let result = manager.builder().build();
+
+        assert!(!result.contains("Agent instruction"));
+        assert!(result.contains("Project instruction"));
+    }
+
+    #[test]
+    fn test_clear_system_prompt_override() {
+        let mut manager = PromptManager::new();
+        manager.set_system_prompt_override("Replacement prompt".to_string());
+        assert!(manager.builder().build().contains("Replacement prompt"));
+
+        manager.clear_system_prompt_override();
+        assert!(!manager.builder().build().contains("Replacement prompt"));
     }
 
     #[test]
@@ -435,6 +469,7 @@ mod tests {
             extension_manager: None,
             session_manager,
             session: Some(Arc::new(session)),
+            use_login_shell_path: false,
         };
 
         let mut extensions: Vec<ExtensionInfo> = PLATFORM_EXTENSIONS

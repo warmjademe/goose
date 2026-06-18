@@ -47,8 +47,6 @@ pub async fn run() -> Result<()> {
     boot_marker("main entered");
     crate::logging::setup_logging(Some("goosed"))?;
 
-    goose::security::set_security_defaults();
-
     let settings = configuration::Settings::new()?;
 
     let secret_key = std::env::var("GOOSE_SERVER__SECRET_KEY")
@@ -158,7 +156,6 @@ pub async fn run() -> Result<()> {
 
     #[cfg(feature = "otel")]
     if goose::otel::otlp::is_otlp_initialized() {
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         goose::otel::otlp::shutdown_otlp();
     }
 

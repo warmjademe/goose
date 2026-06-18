@@ -2,23 +2,30 @@ mod backend;
 pub mod hf_models;
 mod llamacpp;
 pub mod local_model_registry;
+mod mlx;
 pub(crate) mod multimodal;
+#[cfg(feature = "mlx")]
+mod native_tool_parsing;
+#[cfg(feature = "mlx")]
+mod tool_emulation;
 mod tool_parsing;
 
 use crate::config::ExtensionConfig;
 use crate::conversation::message::{Message, MessageContent};
-use crate::model::ModelConfig;
-use crate::providers::base::{
-    MessageStream, Provider, ProviderDef, ProviderMetadata, ProviderUsage, Usage,
-};
-use crate::providers::errors::ProviderError;
+use crate::providers::base::{MessageStream, Provider, ProviderDef, ProviderMetadata};
 use crate::providers::utils::RequestLog;
 use anyhow::Result;
 use async_stream::try_stream;
 use async_trait::async_trait;
 use backend::{BackendLoadedModel, LocalInferenceBackend};
 use futures::future::BoxFuture;
+use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
+use goose_providers::errors::ProviderError;
+use goose_providers::images::ImageFormat;
+use goose_providers::model::ModelConfig;
 use llamacpp::{LlamaCppBackend, LLAMACPP_BACKEND_ID};
+use local_model_registry::ChatTemplate;
+use mlx::{MlxBackend, MLX_BACKEND_ID};
 use rmcp::model::Tool;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -33,13 +40,19 @@ type ModelSlot = Arc<Mutex<Option<Box<dyn BackendLoadedModel>>>>;
 struct ModelCacheKey {
     backend_id: &'static str,
     model_id: String,
+    chat_template: ChatTemplate,
 }
 
 impl ModelCacheKey {
-    fn new(backend_id: &'static str, model_id: impl Into<String>) -> Self {
+    fn new(
+        backend_id: &'static str,
+        model_id: impl Into<String>,
+        chat_template: ChatTemplate,
+    ) -> Self {
         Self {
             backend_id,
             model_id: model_id.into(),
+            chat_template,
         }
     }
 }
@@ -47,6 +60,10 @@ impl ModelCacheKey {
 pub struct InferenceRuntime {
     models: StdMutex<HashMap<ModelCacheKey, ModelSlot>>,
     backends: HashMap<&'static str, Arc<dyn LocalInferenceBackend>>,
+}
+
+pub fn builtin_chat_template_names() -> Vec<String> {
+    llamacpp::builtin_chat_template_names()
 }
 
 /// Global weak reference used to share a single `InferenceRuntime` across
@@ -63,8 +80,10 @@ impl InferenceRuntime {
             return Ok(runtime);
         }
         let llamacpp_backend: Arc<dyn LocalInferenceBackend> = Arc::new(LlamaCppBackend::new()?);
+        let mlx_backend: Arc<dyn LocalInferenceBackend> = Arc::new(MlxBackend::new());
         let mut backends = HashMap::new();
         backends.insert(LLAMACPP_BACKEND_ID, llamacpp_backend);
+        backends.insert(MLX_BACKEND_ID, mlx_backend);
         let runtime = Arc::new(Self {
             models: StdMutex::new(HashMap::new()),
             backends,
@@ -82,14 +101,18 @@ impl InferenceRuntime {
 
     fn backend_for_model(
         &self,
-        _resolved: &ResolvedModelPaths,
+        resolved: &ResolvedModelPaths,
     ) -> Result<Arc<dyn LocalInferenceBackend>, ProviderError> {
-        self.backends
-            .get(LLAMACPP_BACKEND_ID)
-            .cloned()
-            .ok_or_else(|| {
-                ProviderError::ExecutionError("Local inference backend unavailable".to_string())
-            })
+        let backend_id = resolved
+            .backend_id
+            .as_deref()
+            .unwrap_or(LLAMACPP_BACKEND_ID);
+        self.backends.get(backend_id).cloned().ok_or_else(|| {
+            ProviderError::ExecutionError(format!(
+                "Local inference backend '{}' unavailable",
+                backend_id
+            ))
+        })
     }
 
     fn get_or_create_model_slot(&self, key: ModelCacheKey) -> ModelSlot {
@@ -119,6 +142,18 @@ pub(super) struct ResolvedModelPaths {
     pub context_limit: usize,
     pub settings: crate::providers::local_inference::local_model_registry::ModelSettings,
     pub mmproj_path: Option<PathBuf>,
+    pub backend_id: Option<String>,
+    pub draft_model_path: Option<PathBuf>,
+}
+
+fn resolve_model_local_path(model_id: &str) -> Option<PathBuf> {
+    use crate::providers::local_inference::local_model_registry::get_registry;
+
+    get_registry()
+        .lock()
+        .ok()?
+        .get_model(model_id)
+        .map(|entry| entry.local_path.clone())
 }
 
 /// Resolve model path, context limit, settings, and mmproj path for a model ID from the registry.
@@ -131,19 +166,27 @@ fn resolve_model_path(model_id: &str) -> Option<ResolvedModelPaths> {
         if let Some(entry) = registry.get_model(model_id) {
             let ctx = entry.settings.context_size.unwrap_or(0) as usize;
             let mut settings = entry.settings.clone();
-            // Capability flags are inherent to the model family, not user-configurable.
-            // Re-derive them so that registry entries persisted before a model was
-            // recognized (or with a different quantization) still get the right behavior.
             let defaults = default_settings_for_model(model_id);
-            settings.native_tool_calling = defaults.native_tool_calling;
             settings.vision_capable = defaults.vision_capable;
             settings.mmproj_size_bytes = entry.mmproj_size_bytes;
             let mmproj_path = entry.mmproj_path.as_ref().filter(|p| p.exists()).cloned();
+            let backend_id = entry
+                .backend_id
+                .clone()
+                .or_else(|| settings.backend_id.clone());
+            let draft_model = settings
+                .draft_model
+                .clone()
+                .or_else(|| std::env::var("GOOSE_LOCAL_DRAFT_MODEL").ok())
+                .filter(|draft_model| draft_model != model_id);
+            let draft_model_path = draft_model.as_deref().and_then(resolve_model_local_path);
             return Some(ResolvedModelPaths {
                 model_path: entry.local_path.clone(),
                 context_limit: ctx,
                 settings,
                 mmproj_path,
+                backend_id,
+                draft_model_path,
             });
         }
     }
@@ -185,14 +228,106 @@ pub fn recommend_local_model(runtime: &InferenceRuntime) -> String {
     FEATURED_MODELS[0].spec.to_string()
 }
 
-fn build_openai_messages_json(system: &str, messages: &[Message]) -> String {
-    use crate::providers::formats::openai::format_messages;
-    use crate::providers::utils::ImageFormat;
+fn build_openai_messages_json(
+    system: &str,
+    messages: &[Message],
+    media_marker: Option<&str>,
+) -> String {
+    use goose_providers::formats::openai::format_messages;
 
     let mut arr: Vec<Value> = vec![json!({"role": "system", "content": system})];
     arr.extend(format_messages(messages, &ImageFormat::OpenAi));
     strip_image_parts_from_messages(&mut arr);
+    if let Some(marker) = media_marker {
+        convert_text_media_markers(&mut arr, marker);
+    }
     serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn build_openai_text_messages_json(
+    system: &str,
+    messages: &[Message],
+    media_marker: Option<&str>,
+) -> String {
+    let mut arr: Vec<Value> = vec![json!({"role": "system", "content": system})];
+    arr.extend(messages.iter().filter_map(|m| {
+        let content = extract_text_content(m);
+        if content.trim().is_empty() {
+            return None;
+        }
+        let role = match m.role {
+            rmcp::model::Role::User => "user",
+            rmcp::model::Role::Assistant => "assistant",
+        };
+        Some(json!({"role": role, "content": content}))
+    }));
+    if let Some(marker) = media_marker {
+        convert_text_media_markers(&mut arr, marker);
+    }
+    serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn convert_text_media_markers(messages: &mut [Value], marker: &str) {
+    if marker.is_empty() {
+        return;
+    }
+
+    for msg in messages {
+        let Some(content) = msg.get_mut("content") else {
+            continue;
+        };
+
+        if let Some(text) = content.as_str() {
+            if let Some(parts) = split_media_marker_text(text, marker) {
+                *content = json!(parts);
+            }
+            continue;
+        }
+
+        let Some(content_parts) = content.as_array_mut() else {
+            continue;
+        };
+        let mut updated = Vec::new();
+        let mut changed = false;
+        for part in content_parts.iter() {
+            if part.get("type").and_then(|v| v.as_str()) == Some("text") {
+                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                    if let Some(parts) = split_media_marker_text(text, marker) {
+                        updated.extend(parts);
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+            updated.push(part.clone());
+        }
+        if changed {
+            *content_parts = updated;
+        }
+    }
+}
+
+fn split_media_marker_text(text: &str, marker: &str) -> Option<Vec<Value>> {
+    let mut parts = Vec::new();
+    let mut rest = text;
+    let mut found_marker = false;
+    while let Some((before, after)) = rest.split_once(marker) {
+        found_marker = true;
+        let before = before.strip_suffix('\n').unwrap_or(before);
+        if !before.is_empty() {
+            parts.push(json!({"type": "text", "text": before}));
+        }
+        parts.push(json!({"type": "media_marker", "text": marker}));
+        rest = after;
+        rest = rest.strip_prefix('\n').unwrap_or(rest);
+    }
+    if !found_marker {
+        return None;
+    }
+    if !rest.is_empty() {
+        parts.push(json!({"type": "text", "text": rest}));
+    }
+    Some(parts)
 }
 
 /// Remove `image_url` content parts from OpenAI-format messages JSON, replacing
@@ -239,7 +374,10 @@ fn extract_text_content(msg: &Message) -> String {
     for content in &msg.content {
         match content {
             MessageContent::Text(text) => {
-                parts.push(text.text.clone());
+                let text = strip_info_messages(&text.text);
+                if !text.trim().is_empty() {
+                    parts.push(text);
+                }
             }
             MessageContent::ToolRequest(req) => {
                 if let Ok(call) = &req.tool_call {
@@ -287,6 +425,24 @@ fn extract_text_content(msg: &Message) -> String {
     }
 
     parts.join("\n")
+}
+
+fn strip_info_messages(text: &str) -> String {
+    let mut remaining = text;
+    let mut output = String::new();
+
+    while let Some((before, after_start)) = remaining.split_once("<info-msg>") {
+        output.push_str(before);
+        if let Some((_, after_end)) = after_start.split_once("</info-msg>") {
+            remaining = after_end;
+        } else {
+            remaining = "";
+            break;
+        }
+    }
+
+    output.push_str(remaining);
+    output.trim().to_string()
 }
 
 /// Build a `ProviderUsage` and write the request log entry.
@@ -422,7 +578,11 @@ impl Provider for LocalInferenceProvider {
         let backend = self.runtime.backend_for_model(&resolved)?;
         let model_context_limit = resolved.context_limit;
         let model_settings = resolved.settings.clone();
-        let cache_key = ModelCacheKey::new(backend.id(), model_config.model_name.clone());
+        let cache_key = ModelCacheKey::new(
+            backend.id(),
+            model_config.model_name.clone(),
+            model_settings.chat_template.clone(),
+        );
         let model_slot = self.runtime.get_or_create_model_slot(cache_key.clone());
 
         // Ensure model is loaded — unload any other models first to free memory.
@@ -452,8 +612,13 @@ impl Provider for LocalInferenceProvider {
 
         // Allow request_params to override thinking
         let mut model_settings = model_settings;
-        if let Some(false) =
-            model_config.get_config_param::<bool>("enable_thinking", "GOOSE_LOCAL_ENABLE_THINKING")
+        if let Some(false) = model_config
+            .request_param::<bool>("enable_thinking")
+            .or_else(|| {
+                crate::config::Config::global()
+                    .get_param("GOOSE_LOCAL_ENABLE_THINKING")
+                    .ok()
+            })
         {
             model_settings.enable_thinking = false;
         }
@@ -461,6 +626,8 @@ impl Provider for LocalInferenceProvider {
         let model_arc = model_slot.clone();
         let backend = backend.clone();
         let model_name = model_config.model_name.clone();
+        let temperature = model_config.temperature;
+        let max_tokens = model_config.max_tokens;
         let context_limit = model_context_limit;
         let settings = model_settings;
         let resolved_model = resolved.clone();
@@ -477,8 +644,8 @@ impl Provider for LocalInferenceProvider {
             }).collect::<Vec<_>>(),
             "tools": tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
             "settings": {
-                "use_jinja": settings.use_jinja,
-                "native_tool_calling": settings.native_tool_calling,
+                "tool_calling": settings.tool_calling,
+                "chat_template": settings.chat_template,
                 "context_size": settings.context_size,
                 "sampling": settings.sampling,
             },
@@ -525,8 +692,11 @@ impl Provider for LocalInferenceProvider {
                 messages: &messages,
                 tools: &tools,
                 settings: &settings,
+                temperature,
+                max_tokens,
                 context_limit,
                 resolved_model: &resolved_model,
+                draft_model_path: resolved_model.draft_model_path.clone(),
                 message_id: &message_id,
                 tx: &tx,
                 log: &mut log,
@@ -552,5 +722,53 @@ impl Provider for LocalInferenceProvider {
             }
 
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_marker_in_string_content_to_media_marker_part() {
+        let mut messages = vec![json!({
+            "role": "user",
+            "content": "look\n<__media__>\nclosely",
+        })];
+
+        convert_text_media_markers(&mut messages, "<__media__>");
+
+        assert_eq!(
+            messages[0]["content"],
+            json!([
+                {"type": "text", "text": "look"},
+                {"type": "media_marker", "text": "<__media__>"},
+                {"type": "text", "text": "closely"},
+            ])
+        );
+    }
+
+    #[test]
+    fn converts_marker_inside_text_content_parts() {
+        let mut messages = vec![json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<__media__>describe"},
+                {"type": "text", "text": "next"},
+                {"type": "media_marker", "text": "<__media__>"},
+            ],
+        })];
+
+        convert_text_media_markers(&mut messages, "<__media__>");
+
+        assert_eq!(
+            messages[0]["content"],
+            json!([
+                {"type": "media_marker", "text": "<__media__>"},
+                {"type": "text", "text": "describe"},
+                {"type": "text", "text": "next"},
+                {"type": "media_marker", "text": "<__media__>"},
+            ])
+        );
     }
 }

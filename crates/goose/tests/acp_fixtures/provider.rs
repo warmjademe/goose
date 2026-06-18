@@ -12,10 +12,10 @@ use futures::StreamExt;
 use goose::acp::{AcpProvider, AcpProviderConfig};
 use goose::config::{GooseMode, PermissionManager};
 use goose::conversation::message::{ActionRequiredData, Message, MessageContent};
-use goose::model::ModelConfig;
 use goose::permission::permission_confirmation::PrincipalType;
 use goose::permission::{Permission, PermissionConfirmation};
 use goose::providers::base::Provider;
+use goose_providers::model::ModelConfig;
 use goose_test_support::{ExpectedSessionId, IgnoreSessionId, TEST_MODEL};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -325,9 +325,12 @@ impl Session for AcpProviderSession {
         self.work_dir.clone()
     }
 
+    fn session_updates(&self) -> Vec<SessionUpdate> {
+        self.notification_sink.lock().unwrap().drain(..).collect()
+    }
+
     fn notifications(&self) -> Vec<super::Notification> {
-        let updates: Vec<_> = self.notification_sink.lock().unwrap().drain(..).collect();
-        super::to_notifications(&updates)
+        super::to_notifications(&self.session_updates())
     }
 
     async fn prompt(

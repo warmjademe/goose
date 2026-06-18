@@ -1,21 +1,22 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use goose_providers::images::ImageFormat;
 use serde_json::{json, Value};
 
 use super::api_client::{ApiClient, AuthMethod};
 use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata};
-use super::errors::ProviderError;
 use super::openai_compatible::{handle_status, stream_openai_compat};
 use super::retry::ProviderRetry;
-use super::utils::{ImageFormat, RequestLog};
+use super::utils::RequestLog;
 use crate::conversation::message::Message;
-use crate::model::ModelConfig;
-use crate::providers::formats::openai::create_request;
 use crate::providers::formats::openrouter as openrouter_format;
+use goose_providers::errors::ProviderError;
+use goose_providers::formats::openai::create_request;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 
-const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
+pub const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
 pub const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-sonnet-4";
 pub const OPENROUTER_DEFAULT_FAST_MODEL: &str = "google/gemini-2.5-flash";
 pub const OPENROUTER_MODEL_PREFIX_ANTHROPIC: &str = "anthropic";
@@ -47,7 +48,11 @@ pub struct OpenRouterProvider {
 
 impl OpenRouterProvider {
     pub async fn from_env(model: ModelConfig) -> Result<Self> {
-        let model = model.with_fast(OPENROUTER_DEFAULT_FAST_MODEL, OPENROUTER_PROVIDER_NAME)?;
+        let model = crate::model_config::with_configured_fast_model(
+            model,
+            OPENROUTER_PROVIDER_NAME,
+            OPENROUTER_DEFAULT_FAST_MODEL,
+        )?;
 
         let config = crate::config::Config::global();
         let api_key: String = config.get_secret("OPENROUTER_API_KEY")?;
@@ -278,6 +283,7 @@ impl Provider for OpenRouterProvider {
         if is_gemini_model(&model_config.model_name) {
             openrouter_format::add_reasoning_details_to_request(&mut payload, messages);
         }
+        openrouter_format::apply_reasoning_config(&mut payload, model_config);
 
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("transforms".to_string(), json!(["middle-out"]));

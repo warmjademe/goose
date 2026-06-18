@@ -3,20 +3,20 @@ use super::base::{
     ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata,
     DEFAULT_PROVIDER_TIMEOUT_SECS,
 };
-use super::errors::ProviderError;
-use super::inventory::InventoryIdentityInput;
 use super::openai_compatible::handle_status;
 use super::retry::{ProviderRetry, RetryConfig};
-use super::utils::{ImageFormat, RequestLog};
+use super::utils::RequestLog;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
 use crate::conversation::message::Message;
-use crate::model::ModelConfig;
 use crate::providers::formats::ollama::{create_request, response_to_streaming_message_ollama};
 use anyhow::{Error, Result};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::TryStreamExt;
+use goose_providers::errors::ProviderError;
+use goose_providers::images::ImageFormat;
+use goose_providers::model::ModelConfig;
 use reqwest::Response;
 use rmcp::model::Tool;
 use serde_json::{json, Value};
@@ -27,7 +27,7 @@ use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader;
 use url::Url;
 
-const OLLAMA_PROVIDER_NAME: &str = "ollama";
+pub(crate) const OLLAMA_PROVIDER_NAME: &str = "ollama";
 pub const OLLAMA_HOST: &str = "localhost";
 pub const OLLAMA_TIMEOUT: u64 = DEFAULT_PROVIDER_TIMEOUT_SECS;
 pub const OLLAMA_DEFAULT_PORT: u16 = 11434;
@@ -125,7 +125,7 @@ fn apply_ollama_options(payload: &mut Value, model_config: &ModelConfig) {
     }
 }
 
-fn ollama_host_configured(config: &crate::config::Config) -> bool {
+pub(crate) fn ollama_host_configured(config: &crate::config::Config) -> bool {
     config.get_param::<String>("OLLAMA_HOST").is_ok()
 }
 
@@ -219,7 +219,7 @@ impl OllamaProvider {
         }
 
         let model = if let Some(ref fast_model_name) = config.fast_model {
-            model.with_fast(fast_model_name, &config.name)?
+            crate::model_config::with_configured_fast_model(model, &config.name, fast_model_name)?
         } else {
             model
         };
@@ -263,26 +263,6 @@ impl ProviderDef for OllamaProvider {
         _extensions: Vec<crate::config::ExtensionConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
         Box::pin(Self::from_env(model))
-    }
-
-    fn supports_inventory_refresh() -> bool {
-        true
-    }
-
-    fn inventory_configured() -> bool {
-        ollama_host_configured(crate::config::Config::global())
-    }
-
-    fn inventory_identity() -> Result<InventoryIdentityInput> {
-        let config = crate::config::Config::global();
-        Ok(
-            InventoryIdentityInput::new(OLLAMA_PROVIDER_NAME, OLLAMA_PROVIDER_NAME).with_public(
-                "host",
-                config
-                    .get_param::<String>("OLLAMA_HOST")
-                    .unwrap_or_else(|_| OLLAMA_HOST.to_string()),
-            ),
-        )
     }
 }
 
@@ -435,7 +415,9 @@ fn with_line_timeout(
                     Err::<(), anyhow::Error>(anyhow::anyhow!(
                         "Ollama stream stalled: no data received for {}s. \
                          This may indicate the model is overwhelmed by the request payload. \
-                         Try a smaller model or reduce the number of tools.",
+                         Try a smaller model, reduce the number of tools, or increase the \
+                         timeout via OLLAMA_STREAM_TIMEOUT, GOOSE_STREAM_TIMEOUT, or \
+                         OLLAMA_TIMEOUT in your config.",
                         timeout_secs
                     ))?;
                 }
@@ -463,9 +445,7 @@ fn stream_ollama(response: Response, mut log: RequestLog) -> Result<MessageStrea
         pin!(message_stream);
 
         while let Some(message) = message_stream.next().await {
-            let (message, usage) = message.map_err(|e|
-                ProviderError::RequestFailed(format!("Stream decode error: {}", e))
-            )?;
+            let (message, usage) = message.map_err(ProviderError::from_stream_error)?;
             log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
             yield (message, usage);
         }
@@ -556,7 +536,6 @@ mod tests {
     #[test]
     fn test_raw_create_request_contains_unsupported_ollama_fields() {
         use crate::providers::formats::ollama::create_request;
-        use crate::providers::utils::ImageFormat;
 
         let model_config = ModelConfig::new("llama3.1")
             .unwrap()
@@ -586,7 +565,6 @@ mod tests {
     #[test]
     fn test_apply_ollama_options_preserves_stream_options_by_default() {
         use crate::providers::formats::ollama::create_request;
-        use crate::providers::utils::ImageFormat;
 
         let _guard = env_lock::lock_env([
             ("GOOSE_INPUT_LIMIT", None::<&str>),
@@ -631,7 +609,6 @@ mod tests {
     #[test]
     fn test_apply_ollama_options_strips_stream_options_when_disabled() {
         use crate::providers::formats::ollama::create_request;
-        use crate::providers::utils::ImageFormat;
 
         let _guard = env_lock::lock_env([
             ("GOOSE_INPUT_LIMIT", None::<&str>),
@@ -738,8 +715,8 @@ mod tests {
 
         assert!(config.transient_only);
 
-        use super::super::errors::ProviderError;
         use super::super::retry::should_retry;
+        use goose_providers::errors::ProviderError;
 
         assert!(!should_retry(
             &ProviderError::RequestFailed("Resource not found (404)".into()),

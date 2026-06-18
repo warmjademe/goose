@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::declarative_providers;
+use crate::providers::inventory::ensure_refresh_identity_current;
 use std::str::FromStr;
 
 fn inventory_entry_to_dto(entry: ProviderInventoryEntry) -> ProviderInventoryEntryDto {
@@ -438,6 +439,33 @@ impl GooseAcpAgent {
         })
     }
 
+    pub(super) async fn on_list_provider_supported_models(
+        &self,
+        req: ProviderSupportedModelsListRequest,
+    ) -> Result<ProviderSupportedModelsListResponse, agent_client_protocol::Error> {
+        let entry = crate::providers::get_from_registry(&req.provider_id)
+            .await
+            .invalid_params_err_ctx("Unknown provider")?;
+        let model_config = crate::model_config::model_config_from_user_config(
+            &req.provider_id,
+            &entry.metadata().default_model,
+        )
+        .invalid_params_err_ctx("Invalid default model")?;
+        let provider = self
+            .create_provider(&req.provider_id, model_config, Vec::new(), None)
+            .await
+            .internal_err_ctx("Failed to initialize provider")?;
+        let models = provider
+            .fetch_supported_models()
+            .await
+            .internal_err_ctx("Failed to fetch provider supported models")?;
+
+        Ok(ProviderSupportedModelsListResponse {
+            provider_id: req.provider_id,
+            models,
+        })
+    }
+
     pub(super) async fn on_list_provider_catalog(
         &self,
         req: ProviderCatalogListRequest,
@@ -613,12 +641,7 @@ impl GooseAcpAgent {
                 .data(format!("Provider is not editable: {}", req.provider_id)));
         }
 
-        if Config::global()
-            .get_param::<String>("GOOSE_PROVIDER")
-            .ok()
-            .as_deref()
-            == Some(req.provider_id.as_str())
-        {
+        if Config::global().get_goose_provider().ok().as_deref() == Some(req.provider_id.as_str()) {
             return Err(agent_client_protocol::Error::invalid_params().data(format!(
                 "Cannot delete active provider: {}",
                 req.provider_id
@@ -700,9 +723,10 @@ impl GooseAcpAgent {
                 let mut refresh_guard = provider_inventory.refresh_guard(&identity);
                 let provider_result = AssertUnwindSafe(async {
                     let metadata = crate::providers::get_from_registry(&provider_id).await?;
-                    let model_config =
-                        crate::model::ModelConfig::new(&metadata.metadata().default_model)?
-                            .with_canonical_limits(&provider_id);
+                    let model_config = crate::model_config::model_config_from_user_config(
+                        &provider_id,
+                        &metadata.metadata().default_model,
+                    )?;
                     provider_factory(provider_id.clone(), model_config, Vec::new(), None).await
                 })
                 .catch_unwind()

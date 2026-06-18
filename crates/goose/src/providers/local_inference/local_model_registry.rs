@@ -36,10 +36,38 @@ impl Default for SamplingConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallingMode {
+    #[default]
+    Auto,
+    ForceNative,
+    ForceEmulated,
+}
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ChatTemplate {
+    #[serde(alias = "auto")]
+    #[default]
+    Embedded,
+    Builtin {
+        name: String,
+    },
+    CustomInline {
+        template: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ModelSettings {
+    /// Backend implementation to use for this model. Defaults to llama.cpp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_id: Option<String>,
     pub context_size: Option<u32>,
     pub max_output_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_model: Option<String>,
     #[serde(default)]
     pub sampling: SamplingConfig,
     #[serde(default = "default_repeat_penalty")]
@@ -57,13 +85,13 @@ pub struct ModelSettings {
     pub flash_attention: Option<bool>,
     pub n_threads: Option<i32>,
     #[serde(default)]
-    pub native_tool_calling: bool,
+    pub tool_calling: ToolCallingMode,
     #[serde(default)]
-    pub use_jinja: bool,
+    pub chat_template: ChatTemplate,
     #[serde(default = "default_true")]
     pub enable_thinking: bool,
     /// Whether this model architecture supports vision input.
-    /// Derived from the featured model table, not user-configurable.
+    /// Derived from associated mmproj metadata, not user-configurable.
     #[serde(default)]
     pub vision_capable: bool,
     /// Estimated tokens per image for budget planning before mtmd tokenization.
@@ -94,8 +122,10 @@ fn default_repeat_last_n() -> i32 {
 impl Default for ModelSettings {
     fn default() -> Self {
         Self {
+            backend_id: None,
             context_size: None,
             max_output_tokens: None,
+            draft_model: None,
             sampling: SamplingConfig::default(),
             repeat_penalty: 1.0,
             repeat_last_n: 64,
@@ -106,8 +136,8 @@ impl Default for ModelSettings {
             use_mlock: false,
             flash_attention: None,
             n_threads: None,
-            native_tool_calling: false,
-            use_jinja: false,
+            tool_calling: ToolCallingMode::Auto,
+            chat_template: ChatTemplate::Embedded,
             enable_thinking: true,
             vision_capable: false,
             image_token_estimate: default_image_token_estimate(),
@@ -192,7 +222,11 @@ pub fn default_settings_for_model(model_id: &str) -> ModelSettings {
         }
     });
     ModelSettings {
-        native_tool_calling: featured.is_some_and(|m| m.native_tool_calling),
+        tool_calling: if featured.is_some_and(|m| m.native_tool_calling) {
+            ToolCallingMode::ForceNative
+        } else {
+            ToolCallingMode::Auto
+        },
         vision_capable: featured.is_some_and(|m| m.mmproj.is_some()),
         ..ModelSettings::default()
     }
@@ -210,6 +244,13 @@ pub fn featured_mmproj_spec(model_id: &str) -> Option<&'static MmprojSpec> {
         }
         None
     })
+}
+
+/// Local path for an mmproj file, namespaced by repo to avoid collisions
+/// between different models that use the same filename.
+pub fn mmproj_local_path(repo_id: &str, filename: &str) -> PathBuf {
+    let repo_name = repo_id.split('/').next_back().unwrap_or(repo_id);
+    Paths::in_data_dir("models").join(repo_name).join(filename)
 }
 
 /// Check if a model ID corresponds to a featured model.
@@ -233,6 +274,15 @@ pub fn get_registry() -> &'static Mutex<LocalModelRegistry> {
     })
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalModelStorage {
+    #[default]
+    GooseManaged,
+    HuggingFaceCache,
+    ManualPath,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardFile {
     pub filename: String,
@@ -249,6 +299,14 @@ pub struct LocalModelEntry {
     pub quantization: String,
     pub local_path: PathBuf,
     pub source_url: String,
+    /// Backend implementation to use for this model. Defaults to llama.cpp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_id: Option<String>,
+    /// Where the model artifacts are stored. Goose keeps this registry as a
+    /// lightweight settings overlay; Hugging Face cache entries are not deleted
+    /// by Goose because they may be shared with other tools.
+    #[serde(default)]
+    pub storage: LocalModelStorage,
     #[serde(default)]
     pub settings: ModelSettings,
     #[serde(default)]
@@ -263,6 +321,8 @@ pub struct LocalModelEntry {
     #[serde(default)]
     pub mmproj_size_bytes: u64,
     #[serde(default)]
+    pub mmproj_checked: bool,
+    #[serde(default)]
     pub shard_files: Vec<ShardFile>,
 }
 
@@ -271,41 +331,65 @@ impl LocalModelEntry {
     /// table if this model's repo has a known vision encoder.
     pub fn enrich_with_featured_mmproj(&mut self) {
         if let Some(mmproj) = featured_mmproj_spec(&self.id) {
-            let path = mmproj.local_path();
+            let existing_path = self
+                .mmproj_path
+                .as_ref()
+                .filter(|path| path.exists())
+                .cloned();
+            let preserve_existing_path = existing_path.is_some();
+            let path = existing_path.unwrap_or_else(|| mmproj.local_path());
             if self.mmproj_path.as_ref() != Some(&path) {
                 self.mmproj_path = Some(path.clone());
+            }
+            if !preserve_existing_path || self.mmproj_source_url.is_none() {
                 self.mmproj_source_url = Some(format!(
                     "https://huggingface.co/{}/resolve/main/{}",
                     mmproj.repo, mmproj.filename
                 ));
             }
+            self.mmproj_size_bytes = path_size(&path);
+            self.settings.vision_capable = true;
+            self.settings.mmproj_size_bytes = self.mmproj_size_bytes;
+            if matches!(self.settings.tool_calling, ToolCallingMode::Auto) {
+                self.settings.tool_calling = ToolCallingMode::ForceNative;
+            }
+        }
+    }
+
+    pub fn refresh_mmproj_metadata(&mut self) {
+        self.settings.vision_capable = self.mmproj_path.is_some();
+        if let Some(path) = &self.mmproj_path {
+            self.mmproj_checked = true;
             self.settings.vision_capable = true;
             if self.mmproj_size_bytes == 0 || self.settings.mmproj_size_bytes == 0 {
-                if let Ok(meta) = std::fs::metadata(&path) {
+                if let Ok(meta) = std::fs::metadata(path) {
                     self.mmproj_size_bytes = meta.len();
                     self.settings.mmproj_size_bytes = meta.len();
                 }
             }
+        } else {
+            self.mmproj_size_bytes = 0;
+            self.settings.mmproj_size_bytes = 0;
         }
-        let defaults = default_settings_for_model(&self.id);
-        self.settings.native_tool_calling = defaults.native_tool_calling;
     }
 
     pub fn is_downloaded(&self) -> bool {
         self.local_path.exists() && self.shard_files.iter().all(|s| s.local_path.exists())
     }
 
-    /// Returns all GGUF model file paths (primary + shards).
+    /// Returns all local paths owned by Goose for this model.
     /// Does NOT include mmproj — that has separate shared-ownership deletion logic.
     pub fn all_local_paths(&self) -> impl Iterator<Item = &std::path::Path> {
+        let goose_managed = self.storage == LocalModelStorage::GooseManaged;
         std::iter::once(self.local_path.as_path())
             .chain(self.shard_files.iter().map(|s| s.local_path.as_path()))
+            .filter(move |path| goose_managed && !path.is_dir())
     }
 
     pub fn is_downloading(&self) -> bool {
         let download_id = format!("{}-model", self.id);
         let manager = get_download_manager();
-        manager.get_progress(&download_id).is_some()
+        manager.is_downloading(&download_id)
     }
 
     pub fn download_status(&self) -> ModelDownloadStatus {
@@ -367,9 +451,7 @@ impl LocalModelEntry {
         if self.size_bytes > 0 {
             return self.size_bytes;
         }
-        std::fs::metadata(&self.local_path)
-            .map(|m| m.len())
-            .unwrap_or(0)
+        path_size(&self.local_path)
     }
 }
 
@@ -456,6 +538,7 @@ impl LocalModelRegistry {
 
     pub fn add_model(&mut self, mut entry: LocalModelEntry) -> Result<()> {
         entry.enrich_with_featured_mmproj();
+        entry.refresh_mmproj_metadata();
         if let Some(existing) = self.models.iter_mut().find(|m| m.id == entry.id) {
             *existing = entry;
         } else {
@@ -467,6 +550,42 @@ impl LocalModelRegistry {
     pub fn remove_model(&mut self, id: &str) -> Result<()> {
         self.models.retain(|m| m.id != id);
         self.save()
+    }
+
+    pub fn delete_model(&mut self, id: &str) -> Result<()> {
+        let plan = self.deletion_plan(id)?;
+        delete_model_artifacts(&plan)?;
+
+        if is_featured_model(id) {
+            if let Some(entry) = self.models.iter_mut().find(|m| m.id == id) {
+                entry.local_path = Paths::in_data_dir("models").join(&entry.filename);
+                entry.storage = LocalModelStorage::GooseManaged;
+                entry.size_bytes = 0;
+                entry.shard_files.clear();
+            }
+            self.save()
+        } else {
+            self.remove_model(id)
+        }
+    }
+
+    fn deletion_plan(&self, id: &str) -> Result<ModelDeletionPlan> {
+        let entry = self
+            .get_model(id)
+            .ok_or_else(|| anyhow::anyhow!("Model not found: {}", id))?;
+        let mmproj_path = entry.mmproj_path.clone();
+        let other_uses_mmproj = mmproj_path.as_ref().is_some_and(|target| {
+            self.models
+                .iter()
+                .any(|m| m.id != id && m.is_downloaded() && m.mmproj_path.as_ref() == Some(target))
+        });
+
+        Ok(ModelDeletionPlan {
+            all_paths: entry.all_local_paths().map(|p| p.to_path_buf()).collect(),
+            primary_path: entry.local_path.clone(),
+            mmproj_path,
+            delete_mmproj: entry.storage == LocalModelStorage::GooseManaged && !other_uses_mmproj,
+        })
     }
 
     pub fn get_model(&self, id: &str) -> Option<&LocalModelEntry> {
@@ -500,7 +619,142 @@ impl LocalModelRegistry {
     }
 }
 
+struct ModelDeletionPlan {
+    all_paths: Vec<PathBuf>,
+    primary_path: PathBuf,
+    mmproj_path: Option<PathBuf>,
+    delete_mmproj: bool,
+}
+
+fn delete_model_artifacts(plan: &ModelDeletionPlan) -> Result<()> {
+    for path in &plan.all_paths {
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+    }
+
+    if !plan.all_paths.is_empty() {
+        if let Some(parent) = plan.primary_path.parent() {
+            let models_dir = Paths::in_data_dir("models");
+            if parent != models_dir {
+                let _ = std::fs::remove_dir(parent);
+            }
+        }
+    }
+
+    if plan.delete_mmproj {
+        if let Some(mmproj) = &plan.mmproj_path {
+            if mmproj.exists() {
+                std::fs::remove_file(mmproj)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Generate a unique ID for a model from its repo_id and quantization.
+fn path_size(path: &std::path::Path) -> u64 {
+    if path.is_file() {
+        return std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    }
+    let mut total = 0;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            total += path_size(&entry.path());
+        }
+    }
+    total
+}
+
 pub fn model_id_from_repo(repo_id: &str, quantization: &str) -> String {
     format!("{}:{}", repo_id, quantization)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::download_manager::DownloadProgress;
+
+    fn test_entry(id: &str) -> LocalModelEntry {
+        LocalModelEntry {
+            id: id.to_string(),
+            repo_id: "test/repo".to_string(),
+            filename: "model.gguf".to_string(),
+            quantization: "Q4_K_M".to_string(),
+            local_path: PathBuf::from(format!("/tmp/{id}.gguf")),
+            source_url: "https://example.test/model.gguf".to_string(),
+            backend_id: None,
+            storage: LocalModelStorage::GooseManaged,
+            settings: ModelSettings::default(),
+            size_bytes: 0,
+            mmproj_path: None,
+            mmproj_source_url: None,
+            mmproj_size_bytes: 0,
+            mmproj_checked: false,
+            shard_files: vec![],
+        }
+    }
+
+    fn set_progress(entry: &LocalModelEntry, status: DownloadStatus) {
+        get_download_manager().set_progress(DownloadProgress {
+            model_id: format!("{}-model", entry.id),
+            status,
+            bytes_downloaded: 0,
+            total_bytes: 0,
+            progress_percent: 0.0,
+            speed_bps: None,
+            eta_seconds: None,
+            error: None,
+            task_exited: true,
+        });
+    }
+
+    #[test]
+    fn is_downloading_only_for_active_progress() {
+        let entry = test_entry("test-is-downloading-only-active-progress");
+        let download_id = format!("{}-model", entry.id);
+
+        set_progress(&entry, DownloadStatus::Downloading);
+        assert!(entry.is_downloading());
+
+        set_progress(&entry, DownloadStatus::Failed);
+        assert!(!entry.is_downloading());
+
+        set_progress(&entry, DownloadStatus::Cancelled);
+        assert!(!entry.is_downloading());
+
+        get_download_manager().clear_completed(&download_id);
+    }
+
+    #[test]
+    fn enrich_with_featured_mmproj_preserves_existing_downloaded_path() {
+        let existing_path = std::env::temp_dir().join(format!(
+            "goose-mmproj-preserve-{}-{}.gguf",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&existing_path, b"mmproj").unwrap();
+
+        let mut entry = test_entry("unsloth/gemma-4-E4B-it-GGUF:Q4_K_M");
+        entry.mmproj_path = Some(existing_path.clone());
+        entry.mmproj_source_url = Some("https://example.test/mmproj.gguf".to_string());
+
+        entry.enrich_with_featured_mmproj();
+
+        assert_eq!(entry.mmproj_path.as_ref(), Some(&existing_path));
+        assert_eq!(
+            entry.mmproj_source_url.as_deref(),
+            Some("https://example.test/mmproj.gguf")
+        );
+        assert_eq!(entry.mmproj_size_bytes, 6);
+        assert!(entry.settings.vision_capable);
+        assert_eq!(entry.settings.mmproj_size_bytes, 6);
+        assert_eq!(entry.settings.tool_calling, ToolCallingMode::ForceNative);
+
+        let _ = std::fs::remove_file(existing_path);
+    }
 }

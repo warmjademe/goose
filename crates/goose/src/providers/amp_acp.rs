@@ -8,14 +8,12 @@ use crate::acp::{
 };
 use crate::config::search_path::SearchPaths;
 use crate::config::{Config, GooseMode};
-use crate::model::ModelConfig;
-use crate::providers::acp_tooling::{acp_adapter_installed, acp_inventory_identity};
 use crate::providers::base::{current_working_dir, ProviderDef, ProviderMetadata};
-use crate::providers::inventory::InventoryIdentityInput;
+use goose_providers::model::ModelConfig;
 
-const AMP_ACP_PROVIDER_NAME: &str = "amp-acp";
+pub(crate) const AMP_ACP_PROVIDER_NAME: &str = "amp-acp";
 const AMP_ACP_DOC_URL: &str = "https://ampcode.com";
-const AMP_ACP_BINARY: &str = "amp-acp";
+pub(crate) const AMP_ACP_BINARY: &str = "amp-acp";
 
 pub struct AmpAcpProvider;
 
@@ -36,7 +34,7 @@ impl ProviderDef for AmpAcpProvider {
             "Install the Amp CLI: `curl -fsSL https://ampcode.com/install.sh | bash`",
             "Install the ACP adapter: `npm install -g amp-acp`",
             "Ensure your Amp CLI is authenticated (run `amp` to verify)",
-            "Set in your goose config file (`~/.config/goose/config.yaml` on macOS/Linux):\n  GOOSE_PROVIDER: amp-acp\n  GOOSE_MODEL: current",
+            "Add to your goose config file (`~/.config/goose/config.yaml` on macOS/Linux):\n  GOOSE_PROVIDER: amp-acp\n  GOOSE_MODEL: current\n  amp-acp_configured: true",
             "Restart goose for changes to take effect",
         ])
         .with_model_selection_hint("Use the Amp CLI to configure models")
@@ -83,17 +81,5 @@ impl ProviderDef for AmpAcpProvider {
             let metadata = Self::metadata();
             AcpProvider::connect(metadata.name, model, goose_mode, provider_config).await
         })
-    }
-
-    fn supports_inventory_refresh() -> bool {
-        false
-    }
-
-    fn inventory_identity() -> Result<InventoryIdentityInput> {
-        acp_inventory_identity(AMP_ACP_PROVIDER_NAME, AMP_ACP_BINARY)
-    }
-
-    fn inventory_configured() -> bool {
-        acp_adapter_installed(AMP_ACP_BINARY)
     }
 }

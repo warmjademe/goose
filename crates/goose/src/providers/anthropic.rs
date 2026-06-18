@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::TryStreamExt;
+use goose_providers::errors::ProviderError;
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::io;
@@ -10,23 +11,20 @@ use tokio_util::io::StreamReader;
 
 use super::api_client::{ApiClient, AuthMethod};
 use super::base::{ConfigKey, MessageStream, ModelInfo, Provider, ProviderDef, ProviderMetadata};
-use super::errors::ProviderError;
 use super::formats::anthropic::{
-    create_request_with_options, response_to_streaming_message, thinking_type,
-    AnthropicFormatOptions, ThinkingType,
+    create_request_with_options_for_provider, response_to_streaming_message, thinking_type,
+    AnthropicFormatOptions, ThinkingType, ANTHROPIC_PROVIDER_NAME,
 };
-use super::inventory::{config_secret_value, serialize_string_map, InventoryIdentityInput};
 use super::openai_compatible::handle_status;
 use super::openai_compatible::map_http_error_to_provider_error;
 use super::retry::ProviderRetry;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
 use crate::conversation::message::Message;
-use crate::model::ModelConfig;
 use crate::providers::utils::RequestLog;
 use futures::future::BoxFuture;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 
-const ANTHROPIC_PROVIDER_NAME: &str = "anthropic";
 pub const ANTHROPIC_DEFAULT_MODEL: &str = "claude-sonnet-4-5";
 const ANTHROPIC_DEFAULT_FAST_MODEL: &str = "claude-haiku-4-5";
 const ANTHROPIC_KNOWN_MODELS: &[&str] = &[
@@ -66,7 +64,11 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     pub async fn from_env(model: ModelConfig) -> Result<Self> {
-        let model = model.with_fast(ANTHROPIC_DEFAULT_FAST_MODEL, ANTHROPIC_PROVIDER_NAME)?;
+        let model = crate::model_config::with_configured_fast_model(
+            model,
+            ANTHROPIC_PROVIDER_NAME,
+            ANTHROPIC_DEFAULT_FAST_MODEL,
+        )?;
 
         let config = crate::config::Config::global();
         let api_key: String = config.get_secret("ANTHROPIC_API_KEY")?;
@@ -153,7 +155,7 @@ impl AnthropicProvider {
         }
 
         let model = if let Some(ref fast_model_name) = config.fast_model {
-            model.with_fast(fast_model_name, &config.name)?
+            crate::model_config::with_configured_fast_model(model, &config.name, fast_model_name)?
         } else {
             model
         };
@@ -208,6 +210,7 @@ impl AnthropicProvider {
             return Err(map_http_error_to_provider_error(
                 response.status,
                 response.payload,
+                "v1/models",
             ));
         }
 
@@ -267,33 +270,6 @@ impl ProviderDef for AnthropicProvider {
     ) -> BoxFuture<'static, Result<Self::Provider>> {
         Box::pin(Self::from_env(model))
     }
-
-    fn supports_inventory_refresh() -> bool {
-        true
-    }
-
-    fn inventory_identity() -> Result<InventoryIdentityInput> {
-        let config = crate::config::Config::global();
-        let mut identity =
-            InventoryIdentityInput::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_NAME)
-                .with_public(
-                    "host",
-                    config
-                        .get_param::<String>("ANTHROPIC_HOST")
-                        .unwrap_or_else(|_| "https://api.anthropic.com".to_string()),
-                );
-
-        if let Some(api_key) = config_secret_value(config, "ANTHROPIC_API_KEY") {
-            identity = identity.with_secret("api_key", api_key);
-        }
-        if let Ok(headers) = config
-            .get_secret::<std::collections::HashMap<String, String>>("ANTHROPIC_CUSTOM_HEADERS")
-        {
-            identity = identity.with_secret("headers", serialize_string_map(&headers)?);
-        }
-
-        Ok(identity)
-    }
 }
 
 #[async_trait]
@@ -340,7 +316,8 @@ impl Provider for AnthropicProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let mut payload = create_request_with_options(
+        let mut payload = create_request_with_options_for_provider(
+            ANTHROPIC_PROVIDER_NAME,
             model_config,
             system,
             messages,
@@ -378,7 +355,7 @@ impl Provider for AnthropicProvider {
             let message_stream = response_to_streaming_message(framed);
             pin!(message_stream);
             while let Some(message) = futures::StreamExt::next(&mut message_stream).await {
-                let (message, usage) = message.map_err(|e| ProviderError::RequestFailed(format!("Stream decode error: {}", e)))?;
+                let (message, usage) = message.map_err(ProviderError::from_stream_error)?;
                 log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
                 yield (message, usage);
             }

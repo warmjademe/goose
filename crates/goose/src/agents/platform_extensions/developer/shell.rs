@@ -26,7 +26,7 @@ use crate::subprocess::SubprocessExt;
 /// When inside Flatpak, shell commands must be wrapped with `flatpak-spawn --host`
 /// to execute on the host system rather than inside the sandbox.
 #[cfg(not(windows))]
-fn is_flatpak() -> bool {
+pub(crate) fn is_flatpak() -> bool {
     std::path::Path::new("/.flatpak-info").exists()
 }
 
@@ -34,7 +34,7 @@ fn is_flatpak() -> bool {
 const FLATPAK_HOST_ARGS: [&str; 2] = ["--host", "--watch-bus"];
 
 #[cfg(not(windows))]
-fn flatpak_spawn_command() -> tokio::process::Command {
+pub(crate) fn flatpak_spawn_command() -> tokio::process::Command {
     let mut command = tokio::process::Command::new("flatpak-spawn");
     command.args(FLATPAK_HOST_ARGS);
     command
@@ -201,7 +201,7 @@ pub struct ShellOutput {
 /// a minimal PATH like `/usr/bin:/bin`. This function spawns a login shell to
 /// source the user's profile and recover the full PATH.
 #[cfg(not(windows))]
-fn resolve_login_shell_path() -> Option<String> {
+pub(crate) fn resolve_login_shell_path() -> Option<String> {
     use process_wrap::std::{CommandWrap, ProcessSession};
 
     let shell = unix_shell();
@@ -284,7 +284,6 @@ impl LoginPath {
         }
     }
 
-    #[cfg(test)]
     fn resolved(value: Option<String>) -> Self {
         let cell = OnceCell::new();
         let _ = cell.set(value.map(Arc::from));
@@ -320,12 +319,16 @@ pub struct ShellTool {
 }
 
 impl ShellTool {
-    pub fn new() -> std::io::Result<Self> {
+    pub fn new(use_login_shell_path: bool) -> std::io::Result<Self> {
         Ok(Self {
             output_dir: tempfile::tempdir()?,
             call_index: AtomicUsize::new(0),
             #[cfg(not(windows))]
-            login_path: LoginPath::spawn(),
+            login_path: if use_login_shell_path {
+                LoginPath::spawn()
+            } else {
+                LoginPath::resolved(None)
+            },
         })
     }
 

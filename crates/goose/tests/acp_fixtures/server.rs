@@ -53,6 +53,15 @@ impl std::fmt::Debug for AcpServerSession {
 }
 
 impl AcpServerSession {
+    pub fn session_updates(&self) -> Vec<SessionUpdate> {
+        self.updates
+            .lock()
+            .unwrap()
+            .drain(..)
+            .map(|n| n.update)
+            .collect()
+    }
+
     async fn send_prompt(
         &mut self,
         content: Vec<ContentBlock>,
@@ -264,7 +273,7 @@ impl Connection for AcpServerConnection {
                     .connect_with(transport, {
                         let cx_holder = cx_holder_clone;
                         async move |cx: ConnectionTo<Agent>| {
-                            let _resp = cx
+                            let resp = cx
                                 .send_request(
                                     InitializeRequest::new(ProtocolVersion::LATEST)
                                         .client_capabilities(
@@ -276,6 +285,11 @@ impl Connection for AcpServerConnection {
                                 .block_task()
                                 .await
                                 .unwrap();
+                            assert_eq!(
+                                resp.agent_info.as_ref().map(|info| info.name.as_str()),
+                                Some("goose"),
+                                "initialize response must identify the agent"
+                            );
 
                             *cx_holder.lock().unwrap() = Some(cx.clone());
                             let _ = ready_tx.send(());
@@ -464,15 +478,12 @@ impl Session for AcpServerSession {
         self._work_dir.path().to_path_buf()
     }
 
+    fn session_updates(&self) -> Vec<SessionUpdate> {
+        AcpServerSession::session_updates(self)
+    }
+
     fn notifications(&self) -> Vec<super::Notification> {
-        let updates: Vec<_> = self
-            .updates
-            .lock()
-            .unwrap()
-            .drain(..)
-            .map(|n| n.update)
-            .collect();
-        super::to_notifications(&updates)
+        super::to_notifications(&self.session_updates())
     }
 
     async fn prompt(
