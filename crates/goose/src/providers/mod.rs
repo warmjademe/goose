@@ -35,7 +35,9 @@ pub mod gemini_cli;
 pub mod gemini_oauth;
 pub mod githubcopilot;
 pub mod google;
-pub mod http_status;
+pub mod http_status {
+    pub use goose_providers::http_status::*;
+}
 pub mod huggingface;
 pub mod huggingface_auth;
 mod init;
@@ -48,8 +50,12 @@ pub mod nanogpt;
 pub mod oauth;
 pub mod oauth_device_flow;
 pub mod ollama;
-pub mod openai;
-pub mod openai_compatible;
+pub mod openai {
+    pub use goose_providers::openai::*;
+}
+pub mod openai_compatible {
+    pub use goose_providers::openai_compatible::*;
+}
 pub mod openrouter;
 pub mod pi_acp;
 pub mod provider_registry;

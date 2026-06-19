@@ -1,37 +1,37 @@
-use super::api_client::{ApiClient, AuthMethod};
+use super::api_client::ApiClient;
 use super::base::{
     ConfigKey, ModelInfo, Provider, ProviderDef, ProviderMetadata, DEFAULT_PROVIDER_TIMEOUT_SECS,
-};
-use super::formats::openai_responses::{
-    create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
-};
-use super::openai_compatible::{
-    handle_response_openai_compat, handle_status, stream_openai_compat, stream_responses_compat,
 };
 use super::retry::ProviderRetry;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
 use crate::conversation::message::Message;
+use crate::conversation::token_usage::ProviderUsage;
+use crate::errors::ProviderError;
+use crate::formats::openai::is_openai_responses_model;
+use crate::formats::openai::{
+    create_request_with_options, get_usage, response_to_message, OpenAiFormatOptions,
+};
+use crate::formats::openai_responses::{
+    create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
+};
+use crate::images::ImageFormat;
+use crate::openai_compatible::{
+    handle_response_openai_compat, handle_status, stream_openai_compat, stream_responses_compat,
+};
+use crate::request_log::{start_log, LoggerHandleExt};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use goose_providers::conversation::token_usage::ProviderUsage;
-use goose_providers::errors::ProviderError;
-use goose_providers::formats::openai::is_openai_responses_model;
-use goose_providers::formats::openai::{
-    create_request_with_options, get_usage, response_to_message, OpenAiFormatOptions,
-};
-use goose_providers::images::ImageFormat;
-use goose_providers::request_log::{start_log, LoggerHandleExt};
 use reqwest::StatusCode;
 use std::collections::HashMap;
 
-use crate::providers::base::MessageStream;
-use goose_providers::model::ModelConfig;
+use crate::base::{MessageStream, ProviderDescriptor};
+use crate::model::ModelConfig;
 use rmcp::model::Tool;
 
 pub(crate) const OPEN_AI_PROVIDER_NAME: &str = "openai";
 pub(crate) const OPEN_AI_DEFAULT_BASE_PATH: &str = "v1/chat/completions";
-const OPEN_AI_VERSIONLESS_BASE_PATH: &str = "chat/completions";
+pub(crate) const OPEN_AI_VERSIONLESS_BASE_PATH: &str = "chat/completions";
 const OPEN_AI_DEFAULT_RESPONSES_PATH: &str = "v1/responses";
 const OPEN_AI_DEFAULT_MODELS_PATH: &str = "v1/models";
 pub const OPEN_AI_DEFAULT_MODEL: &str = "gpt-4o";
@@ -68,18 +68,18 @@ pub const OPEN_AI_DOC_URL: &str = "https://platform.openai.com/docs/models";
 type OpenAiBaseUrlParts = (String, Vec<(String, String)>, bool);
 
 /// Components extracted from an `OPENAI_BASE_URL` value.
-struct ParsedBaseUrl {
+pub(crate) struct ParsedBaseUrl {
     /// The host (scheme + authority + any path prefix before `/v1`).
-    host: String,
+    pub(crate) host: String,
     /// Query parameters to forward on every request.
-    query_params: Vec<(String, String)>,
+    pub(crate) query_params: Vec<(String, String)>,
     /// Whether the URL path ended with `/v1`.
-    has_v1: bool,
+    pub(crate) has_v1: bool,
     /// `true` when the host was derived from `OPENAI_BASE_URL`.
     /// Controls whether `OPENAI_BASE_PATH` is read from env only
     /// (to avoid persisted desktop defaults shadowing URL-derived paths)
     /// or from config too (to honour Docker Model Runner setups).
-    from_base_url: bool,
+    pub(crate) from_base_url: bool,
 }
 
 /// Ensure a base URL has an explicit scheme.
@@ -154,192 +154,123 @@ pub struct OpenAiProvider {
     preserve_thinking_context: bool,
 }
 
-impl OpenAiProvider {
-    pub async fn from_env(
-        model: ModelConfig,
-        tls_config: Option<crate::providers::api_client::TlsConfig>,
-    ) -> Result<Self> {
-        let config = crate::config::Config::global();
+/// Builder for [`OpenAiProvider`].
+///
+/// Exposes every field of the provider so that constructors living outside
+/// `openai.rs` (e.g. in `openai_def.rs`) can assemble a provider without
+/// needing direct access to the struct's private fields.
+pub struct OpenAiProviderBuilder {
+    api_client: ApiClient,
+    base_path: String,
+    organization: Option<String>,
+    project: Option<String>,
+    model: ModelConfig,
+    custom_headers: Option<HashMap<String, String>>,
+    supports_streaming: bool,
+    name: String,
+    custom_models: Option<Vec<String>>,
+    dynamic_models: Option<bool>,
+    skip_canonical_filtering: bool,
+    preserve_thinking_context: bool,
+}
 
-        // Resolve host and base_path.
-        //
-        // Priority (highest first):
-        //   1. OPENAI_HOST env var — session override (deprecated but still
-        //      honoured so that `OPENAI_HOST=… goose` keeps working)
-        //   2. OPENAI_BASE_URL (env or config) — ecosystem-standard
-        //   3. OPENAI_HOST from config file — persisted by `goose configure`
-        //   4. Default "https://api.openai.com"
-        //
-        // OPENAI_BASE_URL is parsed into host + query params + a flag
-        // indicating whether the URL included a /v1 path segment.  When /v1
-        // is present the default base_path is "v1/chat/completions";
-        // otherwise "chat/completions" to match the OpenAI SDK convention.
-        //
-        // OPENAI_BASE_PATH always wins when set explicitly.
-        let parsed = if let Ok(h) = std::env::var("OPENAI_HOST") {
-            // OPENAI_HOST env var takes priority as a session override so
-            // that existing scripts like `OPENAI_HOST=… goose` still work
-            // even after OPENAI_BASE_URL is persisted in config.
-            ParsedBaseUrl {
-                host: h,
-                query_params: vec![],
-                has_v1: true,
-                from_base_url: false,
-            }
-        } else if let Some(raw_url) = config
-            .get_param::<String>("OPENAI_BASE_URL")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-        {
-            Self::parse_base_url(&raw_url)?
-        } else {
-            let h: String = config
-                .get_param("OPENAI_HOST")
-                .unwrap_or_else(|_| "https://api.openai.com".to_string());
-            ParsedBaseUrl {
-                host: h,
-                query_params: vec![],
-                has_v1: true,
-                from_base_url: false,
-            }
-        };
-
-        // When the host was derived from OPENAI_BASE_URL, read
-        // OPENAI_BASE_PATH from env only so that the desktop UI's persisted
-        // default ("v1/chat/completions") doesn't shadow the versionless
-        // path.  When the host came from OPENAI_HOST (env or config), read
-        // from config too — Docker Model Runner and similar setups persist a
-        // custom base_path that must be honoured.
-        let default_bp = || {
-            if parsed.has_v1 {
-                OPEN_AI_DEFAULT_BASE_PATH.to_string()
-            } else {
-                OPEN_AI_VERSIONLESS_BASE_PATH.to_string()
-            }
-        };
-        let base_path: String = if parsed.from_base_url {
-            std::env::var("OPENAI_BASE_PATH").unwrap_or_else(|_| default_bp())
-        } else {
-            config
-                .get_param("OPENAI_BASE_PATH")
-                .unwrap_or_else(|_| default_bp())
-        };
-
-        // Only apply the default fast model when talking to OpenAI directly.
-        // Custom/compatible endpoints likely don't serve gpt-4o-mini, so
-        // leave fast_model unset (complete_fast will fall back to the main model).
-        // Parse the URL and compare the hostname exactly to avoid false positives
-        // (e.g. https://api.openai.com.local:8000 or proxy paths containing api.openai.com).
-        let host = parsed.host.clone();
-
-        // Only apply the default fast model when talking to OpenAI directly.
-        // Custom/compatible endpoints likely don't serve gpt-4o-mini, so
-        // leave fast_model unset (complete_fast will fall back to the main model).
-        // Parse the URL and compare the hostname exactly to avoid false positives
-        // (e.g. https://api.openai.com.local:8000 or proxy paths containing api.openai.com).
-        let is_openai = url::Url::parse(&host)
-            .ok()
-            .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
-            .map(|h| h == "api.openai.com" || h.ends_with(".api.openai.com"))
-            .unwrap_or(false);
-        let model = if is_openai {
-            crate::model_config::with_configured_fast_model(
-                model,
-                OPEN_AI_PROVIDER_NAME,
-                OPEN_AI_DEFAULT_FAST_MODEL,
-            )?
-        } else {
-            model
-        };
-
-        let secrets = config
-            .get_secrets("OPENAI_API_KEY", &["OPENAI_CUSTOM_HEADERS"])
-            .unwrap_or_default();
-        let api_key: Option<String> = secrets.get("OPENAI_API_KEY").cloned();
-        let custom_headers: Option<HashMap<String, String>> = secrets
-            .get("OPENAI_CUSTOM_HEADERS")
-            .cloned()
-            .map(parse_custom_headers);
-
-        let organization: Option<String> = config.get_param("OPENAI_ORGANIZATION").ok();
-        let project: Option<String> = config.get_param("OPENAI_PROJECT").ok();
-        let timeout_secs: u64 = config
-            .get_param("OPENAI_TIMEOUT")
-            .unwrap_or(DEFAULT_PROVIDER_TIMEOUT_SECS);
-
-        let auth = match api_key {
-            Some(key) if !key.is_empty() => AuthMethod::BearerToken(key),
-            _ => AuthMethod::NoAuth,
-        };
-        let mut api_client = ApiClient::with_timeout_and_tls(
-            parsed.host,
-            auth,
-            std::time::Duration::from_secs(timeout_secs),
-            tls_config,
-        )?;
-
-        if !parsed.query_params.is_empty() {
-            api_client = api_client.with_query(parsed.query_params);
-        }
-
-        if let Some(org) = &organization {
-            api_client = api_client.with_header("OpenAI-Organization", org)?;
-        }
-
-        if let Some(project) = &project {
-            api_client = api_client.with_header("OpenAI-Project", project)?;
-        }
-
-        if let Some(headers) = &custom_headers {
-            let mut header_map = reqwest::header::HeaderMap::new();
-            for (key, value) in headers {
-                let header_name = reqwest::header::HeaderName::from_bytes(key.as_bytes())?;
-                let header_value = reqwest::header::HeaderValue::from_str(value)?;
-                header_map.insert(header_name, header_value);
-            }
-            api_client = api_client.with_headers(header_map)?;
-        }
-
-        let mut provider = Self {
+impl OpenAiProviderBuilder {
+    pub fn new(api_client: ApiClient, model: ModelConfig) -> Self {
+        Self {
             api_client,
-            base_path,
-            organization,
-            project,
+            base_path: OPEN_AI_DEFAULT_BASE_PATH.to_string(),
+            organization: None,
+            project: None,
             model,
-            custom_headers,
+            custom_headers: None,
             supports_streaming: true,
             name: OPEN_AI_PROVIDER_NAME.to_string(),
             custom_models: None,
             dynamic_models: None,
             skip_canonical_filtering: false,
-            preserve_thinking_context: !is_openai,
-        };
-
-        // Only fill the context limit when nothing else set it: an existing value may be
-        // an explicit GOOSE_CONTEXT_LIMIT, an ACP/server per-session override, or a
-        // GOOSE_PREDEFINED_MODELS entry, none of which we should overwrite. llama.cpp and
-        // Ollama report the real allocated window via the non-standard meta.n_ctx field;
-        // reading it fixes auto-compaction for local servers that would otherwise fall
-        // back to DEFAULT_CONTEXT_LIMIT. The probe is bounded by a short timeout so a
-        // hung /v1/models can't stall provider construction (the shared ApiClient uses
-        // OPENAI_TIMEOUT, up to 600s).
-        if provider.model.context_limit.is_none() {
-            const N_CTX_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-            let model_name = provider.model.model_name.clone();
-            if let Ok(Some(n_ctx)) = tokio::time::timeout(
-                N_CTX_PROBE_TIMEOUT,
-                provider.fetch_n_ctx_from_api(&model_name),
-            )
-            .await
-            {
-                provider.model.context_limit = Some(n_ctx);
-            }
+            preserve_thinking_context: false,
         }
-
-        Ok(provider)
     }
 
+    pub fn api_client(mut self, api_client: ApiClient) -> Self {
+        self.api_client = api_client;
+        self
+    }
+
+    pub fn base_path(mut self, base_path: impl Into<String>) -> Self {
+        self.base_path = base_path.into();
+        self
+    }
+
+    pub fn organization(mut self, organization: Option<String>) -> Self {
+        self.organization = organization;
+        self
+    }
+
+    pub fn project(mut self, project: Option<String>) -> Self {
+        self.project = project;
+        self
+    }
+
+    pub fn model(mut self, model: ModelConfig) -> Self {
+        self.model = model;
+        self
+    }
+
+    pub fn custom_headers(mut self, custom_headers: Option<HashMap<String, String>>) -> Self {
+        self.custom_headers = custom_headers;
+        self
+    }
+
+    pub fn supports_streaming(mut self, supports_streaming: bool) -> Self {
+        self.supports_streaming = supports_streaming;
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    pub fn custom_models(mut self, custom_models: Option<Vec<String>>) -> Self {
+        self.custom_models = custom_models;
+        self
+    }
+
+    pub fn dynamic_models(mut self, dynamic_models: Option<bool>) -> Self {
+        self.dynamic_models = dynamic_models;
+        self
+    }
+
+    pub fn skip_canonical_filtering(mut self, skip_canonical_filtering: bool) -> Self {
+        self.skip_canonical_filtering = skip_canonical_filtering;
+        self
+    }
+
+    pub fn preserve_thinking_context(mut self, preserve_thinking_context: bool) -> Self {
+        self.preserve_thinking_context = preserve_thinking_context;
+        self
+    }
+
+    pub fn build(self) -> OpenAiProvider {
+        OpenAiProvider {
+            api_client: self.api_client,
+            base_path: self.base_path,
+            organization: self.organization,
+            project: self.project,
+            model: self.model,
+            custom_headers: self.custom_headers,
+            supports_streaming: self.supports_streaming,
+            name: self.name,
+            custom_models: self.custom_models,
+            dynamic_models: self.dynamic_models,
+            skip_canonical_filtering: self.skip_canonical_filtering,
+            preserve_thinking_context: self.preserve_thinking_context,
+        }
+    }
+}
+
+impl OpenAiProvider {
     #[doc(hidden)]
     pub fn new(api_client: ApiClient, model: ModelConfig) -> Self {
         Self {
@@ -358,150 +289,7 @@ impl OpenAiProvider {
         }
     }
 
-    /// Resolve the API key from a declarative provider config.
-    ///
-    /// Returns `Some(key)` if a key is found, `None` if the key is optional/missing,
-    /// or an error if the key is required but missing/unreadable.
-    ///
-    /// The `get_secret` closure is used to look up the secret by key name. This allows
-    /// testing without depending on `Config::global()`.
-    pub fn resolve_api_key(
-        config: &DeclarativeProviderConfig,
-        get_secret: &dyn Fn(&str) -> Result<String, crate::config::ConfigError>,
-    ) -> Result<Option<String>> {
-        if config.api_key_env.is_empty() {
-            return Ok(None);
-        }
-
-        match get_secret(&config.api_key_env) {
-            Ok(key) => Ok(Some(key)),
-            Err(e) => {
-                use crate::config::ConfigError;
-                match e {
-                    ConfigError::NotFound(_) => {
-                        if config.requires_auth {
-                            anyhow::bail!(
-                                "Required API key {} is not set. Configure it via `goose configure` or set the {} environment variable.",
-                                config.api_key_env,
-                                config.api_key_env
-                            );
-                        }
-                        Ok(None)
-                    }
-                    other => {
-                        if config.requires_auth {
-                            anyhow::bail!("Failed to read {}: {}", config.api_key_env, other);
-                        } else {
-                            tracing::warn!(
-                                "Failed to read optional API key {}: {}. Proceeding without authentication.",
-                                config.api_key_env,
-                                other
-                            );
-                            Ok(None)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn from_custom_config(
-        model: ModelConfig,
-        config: DeclarativeProviderConfig,
-        tls_config: Option<crate::providers::api_client::TlsConfig>,
-    ) -> Result<Self> {
-        let custom_models = if !config.models.is_empty() {
-            Some(
-                config
-                    .models
-                    .iter()
-                    .map(|m| m.name.clone())
-                    .collect::<Vec<String>>(),
-            )
-        } else {
-            None
-        };
-
-        if config.dynamic_models == Some(false) && custom_models.is_none() {
-            return Err(anyhow::anyhow!(
-                "Provider '{}' has dynamic_models: false but no static models listed; \
-                 at least one entry in `models` is required.",
-                config.name
-            ));
-        }
-
-        let global_config = crate::config::Config::global();
-        let api_key = Self::resolve_api_key(&config, &|key| global_config.get_secret(key))?;
-
-        let normalized_base_url = ensure_url_scheme(&config.base_url);
-        let url = url::Url::parse(&normalized_base_url)
-            .map_err(|e| anyhow::anyhow!("Invalid base URL '{}': {}", config.base_url, e))?;
-
-        let host = if let Some(port) = url.port() {
-            format!(
-                "{}://{}:{}",
-                url.scheme(),
-                url.host_str().unwrap_or(""),
-                port
-            )
-        } else {
-            format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""))
-        };
-        let base_path = if let Some(ref explicit_path) = config.base_path {
-            explicit_path.trim_start_matches('/').to_string()
-        } else {
-            Self::derive_base_path(url.path())
-        };
-
-        let timeout_secs = config
-            .timeout_seconds
-            .unwrap_or(DEFAULT_PROVIDER_TIMEOUT_SECS);
-
-        let auth = match api_key {
-            Some(key) if !key.is_empty() => AuthMethod::BearerToken(key),
-            _ => AuthMethod::NoAuth,
-        };
-        let mut api_client = ApiClient::with_timeout_and_tls(
-            host,
-            auth,
-            std::time::Duration::from_secs(timeout_secs),
-            tls_config,
-        )?;
-
-        // Add custom headers if present
-        if let Some(headers) = &config.headers {
-            let mut header_map = reqwest::header::HeaderMap::new();
-            for (key, value) in headers {
-                let header_name = reqwest::header::HeaderName::from_bytes(key.as_bytes())?;
-                let header_value = reqwest::header::HeaderValue::from_str(value)?;
-                header_map.insert(header_name, header_value);
-            }
-            api_client = api_client.with_headers(header_map)?;
-        }
-
-        let model = if let Some(ref fast_model_name) = config.fast_model {
-            crate::model_config::with_configured_fast_model(model, &config.name, fast_model_name)?
-        } else {
-            model
-        };
-
-        Ok(Self {
-            api_client,
-            base_path,
-            organization: None,
-            project: None,
-            model,
-            custom_headers: config.headers,
-            supports_streaming: config.supports_streaming.unwrap_or(true),
-            name: config.name.clone(),
-            custom_models,
-            dynamic_models: config.dynamic_models,
-            skip_canonical_filtering: config.skip_canonical_filtering,
-            preserve_thinking_context: config.preserves_thinking,
-        })
-    }
-
-    fn parse_base_url(raw_url: &str) -> Result<ParsedBaseUrl> {
+    pub(crate) fn parse_base_url(raw_url: &str) -> Result<ParsedBaseUrl> {
         let (host, query_params, has_v1) = parse_openai_base_url(raw_url)?;
         Ok(ParsedBaseUrl {
             host,
@@ -511,7 +299,7 @@ impl OpenAiProvider {
         })
     }
 
-    fn derive_base_path(url_path: &str) -> String {
+    pub(crate) fn derive_base_path(url_path: &str) -> String {
         let stripped = url_path.trim_start_matches('/');
         let normalized = stripped.trim_end_matches('/');
         if normalized.is_empty() {
@@ -651,6 +439,28 @@ impl OpenAiProvider {
         }
     }
 
+    /// Fill the model's context limit from the API when it isn't already set.
+    ///
+    /// An existing value may be an explicit GOOSE_CONTEXT_LIMIT, an ACP/server
+    /// per-session override, or a GOOSE_PREDEFINED_MODELS entry, none of which we
+    /// should overwrite. llama.cpp and Ollama report the real allocated window via
+    /// the non-standard meta.n_ctx field; reading it fixes auto-compaction for local
+    /// servers that would otherwise fall back to DEFAULT_CONTEXT_LIMIT. The probe is
+    /// bounded by a short timeout so a hung /v1/models can't stall provider
+    /// construction (the shared ApiClient uses OPENAI_TIMEOUT, up to 600s).
+    pub(crate) async fn probe_context_limit_if_unset(&mut self) {
+        if self.model.context_limit.is_some() {
+            return;
+        }
+        const N_CTX_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+        let model_name = self.model.model_name.clone();
+        if let Ok(Some(n_ctx)) =
+            tokio::time::timeout(N_CTX_PROBE_TIMEOUT, self.fetch_n_ctx_from_api(&model_name)).await
+        {
+            self.model.context_limit = Some(n_ctx);
+        }
+    }
+
     async fn fetch_models_from_api(&self) -> Result<Vec<String>, ProviderError> {
         let models_path =
             Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
@@ -730,7 +540,7 @@ fn parse_n_ctx_from_models(json: &serde_json::Value, model_name: &str) -> Option
     }
 }
 
-impl goose_providers::base::ProviderDescriptor for OpenAiProvider {
+impl ProviderDescriptor for OpenAiProvider {
     fn metadata() -> ProviderMetadata {
         let models = OPEN_AI_KNOWN_MODELS
             .iter()
@@ -938,7 +748,7 @@ impl Provider for OpenAiProvider {
     }
 }
 
-fn parse_custom_headers(s: String) -> HashMap<String, String> {
+pub(crate) fn parse_custom_headers(s: String) -> HashMap<String, String> {
     s.split(',')
         .filter_map(|header| {
             let mut parts = header.splitn(2, '=');
@@ -952,6 +762,7 @@ fn parse_custom_headers(s: String) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_client::AuthMethod;
     use serde_json::json;
 
     fn make_provider(name: &str) -> OpenAiProvider {
