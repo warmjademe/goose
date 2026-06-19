@@ -63,6 +63,7 @@ pub mod provider_test;
 mod retry {
     pub use goose_providers::retry::*;
 }
+pub mod openai_def;
 #[cfg(feature = "aws-providers")]
 pub mod sagemaker_tgi;
 pub mod snowflake;

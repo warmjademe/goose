@@ -107,7 +107,7 @@ fn parse_http_date(value: &str) -> Option<SystemTime> {
     None
 }
 
-pub(crate) fn is_context_length_exceeded_message(text: &str) -> bool {
+pub fn is_context_length_exceeded_message(text: &str) -> bool {
     let text_lower = text.to_lowercase();
 
     let direct_context_phrases = [
