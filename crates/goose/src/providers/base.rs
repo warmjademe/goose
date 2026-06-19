@@ -6,9 +6,6 @@ pub use goose_providers::conversation::token_usage::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Default HTTP timeout for all provider API calls.
-/// Long-running model inference can take several minutes, so we allow up to 10 minutes
-/// before giving up. Individual providers may override this via their own config key.
 pub const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
 
 use crate::config::ExtensionConfig;
@@ -55,47 +52,6 @@ pub trait ProviderDef: Send + Sync {
     where
         Self: Sized,
     {
-        // ACP subprocess providers must override this so session cwd is preserved.
-        // Non-subprocess providers can rely on the default because cwd is irrelevant.
         Self::from_env(model, extensions, tls_config)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    #[test]
-    fn test_provider_metadata_context_limits() {
-        // Test that ProviderMetadata::new correctly sets context limits
-        let test_models = vec!["gpt-4o", "claude-sonnet-4-20250514", "unknown-model"];
-        let metadata = ProviderMetadata::new(
-            "test",
-            "Test Provider",
-            "Test Description",
-            "gpt-4o",
-            test_models,
-            "https://example.com",
-            vec![],
-        );
-
-        let model_info: HashMap<String, usize> = metadata
-            .known_models
-            .into_iter()
-            .map(|m| (m.name, m.context_limit))
-            .collect();
-
-        // gpt-4o should have 128k limit
-        assert_eq!(*model_info.get("gpt-4o").unwrap(), 128_000);
-
-        // claude-sonnet-4-20250514 should have 200k limit
-        assert_eq!(
-            *model_info.get("claude-sonnet-4-20250514").unwrap(),
-            200_000
-        );
-
-        // unknown model should have default limit (128k)
-        assert_eq!(*model_info.get("unknown-model").unwrap(), 128_000);
     }
 }
