@@ -15,14 +15,9 @@ use crate::config::ExtensionConfig;
 use goose_providers::model::ModelConfig;
 use utoipa::ToSchema;
 
-use once_cell::sync::Lazy;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 pub use goose_providers::base::*;
-
-/// A global store for the current model being used, we use this as when a provider returns, it tells us the real model, not an alias
-pub static CURRENT_MODEL: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum ProviderType {
