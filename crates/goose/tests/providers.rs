@@ -186,6 +186,7 @@ impl ProviderTestConfig {
         self
     }
 
+    #[allow(dead_code)] // only used by tests that are behind non-default feature flags
     fn clear_env(mut self, vars: &'static [&'static str]) -> Self {
         self.clear_env = vars;
         self
