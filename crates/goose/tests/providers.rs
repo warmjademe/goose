@@ -186,6 +186,11 @@ impl ProviderTestConfig {
         self
     }
 
+    fn clear_env(mut self, vars: &'static [&'static str]) -> Self {
+        self.clear_env = vars;
+        self
+    }
+
     fn with_agentic_provider(name: &'static str, model_name: &'static str, binary: &str) -> Self {
         let skip = which::which(binary).is_err();
         Self {
