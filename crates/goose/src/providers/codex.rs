@@ -15,7 +15,6 @@ use tokio::process::Command;
 
 use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata};
 use super::utils::filter_extensions_from_system_prompt;
-use crate::config::base::{CodexCommand, CodexSkipGitCheck};
 use crate::config::paths::Paths;
 use crate::config::search_path::SearchPaths;
 use crate::config::{Config, ExtensionConfig, GooseMode};
@@ -628,8 +627,8 @@ impl ProviderDef for CodexProvider {
             CODEX_KNOWN_MODELS.to_vec(),
             CODEX_DOC_URL,
             vec![
-                ConfigKey::from_value_type::<CodexCommand>(true, false, true),
-                ConfigKey::from_value_type::<CodexSkipGitCheck>(false, false, true),
+                ConfigKey::new("CODEX_COMMAND", true, false, Some("codex"), true),
+                ConfigKey::new("CODEX_SKIP_GIT_CHECK", false, false, Some("false"), true),
             ],
         )
     }
