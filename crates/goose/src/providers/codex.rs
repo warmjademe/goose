@@ -615,9 +615,7 @@ fn codex_mcp_config_overrides(extensions: &[ExtensionConfig]) -> Vec<String> {
     overrides
 }
 
-impl ProviderDef for CodexProvider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for CodexProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             CODEX_PROVIDER_NAME,
@@ -632,6 +630,10 @@ impl ProviderDef for CodexProvider {
             ],
         )
     }
+}
+
+impl ProviderDef for CodexProvider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,
@@ -753,6 +755,7 @@ impl Provider for CodexProvider {
 mod tests {
     use super::*;
     use crate::agents::extension::Envs;
+    use goose_providers::base::ProviderDescriptor as _;
     use goose_test_support::TEST_IMAGE_B64;
     use std::collections::HashMap;
     use test_case::test_case;

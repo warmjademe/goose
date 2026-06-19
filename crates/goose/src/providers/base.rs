@@ -28,12 +28,8 @@ pub(crate) fn current_working_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-pub trait ProviderDef: Send + Sync {
+pub trait ProviderDef: ProviderDescriptor + Send + Sync {
     type Provider: Provider + 'static;
-
-    fn metadata() -> ProviderMetadata
-    where
-        Self: Sized;
 
     fn from_env(
         model: ModelConfig,

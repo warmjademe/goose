@@ -279,9 +279,7 @@ impl CursorAgentProvider {
     }
 }
 
-impl ProviderDef for CursorAgentProvider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for CursorAgentProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             CURSOR_AGENT_PROVIDER_NAME,
@@ -299,6 +297,10 @@ impl ProviderDef for CursorAgentProvider {
             )],
         )
     }
+}
+
+impl ProviderDef for CursorAgentProvider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,

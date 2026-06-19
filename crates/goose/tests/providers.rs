@@ -161,11 +161,6 @@ impl ProviderTestConfig {
         self
     }
 
-    fn clear_env(mut self, vars: &'static [&'static str]) -> Self {
-        self.clear_env = vars;
-        self
-    }
-
     fn test_permissions(mut self, v: bool) -> Self {
         self.test_permissions = v;
         self

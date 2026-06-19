@@ -530,9 +530,7 @@ impl GithubCopilotProvider {
     }
 }
 
-impl ProviderDef for GithubCopilotProvider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for GithubCopilotProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             GITHUB_COPILOT_PROVIDER_NAME,
@@ -549,6 +547,10 @@ impl ProviderDef for GithubCopilotProvider {
             ],
         )
     }
+}
+
+impl ProviderDef for GithubCopilotProvider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,

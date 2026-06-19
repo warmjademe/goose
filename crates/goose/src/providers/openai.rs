@@ -730,9 +730,7 @@ fn parse_n_ctx_from_models(json: &serde_json::Value, model_name: &str) -> Option
     }
 }
 
-impl ProviderDef for OpenAiProvider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for OpenAiProvider {
     fn metadata() -> ProviderMetadata {
         let models = OPEN_AI_KNOWN_MODELS
             .iter()
@@ -775,6 +773,10 @@ impl ProviderDef for OpenAiProvider {
             "Copy the key and paste it above",
         ])
     }
+}
+
+impl ProviderDef for OpenAiProvider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,

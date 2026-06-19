@@ -156,9 +156,7 @@ impl GeminiCliProvider {
     }
 }
 
-impl ProviderDef for GeminiCliProvider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for GeminiCliProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             GEMINI_CLI_PROVIDER_NAME,
@@ -176,6 +174,10 @@ impl ProviderDef for GeminiCliProvider {
             )],
         )
     }
+}
+
+impl ProviderDef for GeminiCliProvider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,

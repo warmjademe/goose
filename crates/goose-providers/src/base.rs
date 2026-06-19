@@ -263,6 +263,10 @@ impl ModelInfo {
     }
 }
 
+pub trait ProviderDescriptor {
+    fn metadata() -> ProviderMetadata;
+}
+
 /// A message stream yields partial text content but complete tool calls, all within the Message object
 /// So a message with text will contain potentially just a word of a longer response, but tool calls
 /// messages will only be yielded once concatenated.

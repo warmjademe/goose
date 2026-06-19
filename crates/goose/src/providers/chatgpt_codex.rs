@@ -955,9 +955,7 @@ impl ChatGptCodexProvider {
     }
 }
 
-impl ProviderDef for ChatGptCodexProvider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for ChatGptCodexProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             CHATGPT_CODEX_PROVIDER_NAME,
@@ -975,6 +973,10 @@ impl ProviderDef for ChatGptCodexProvider {
             )],
         )
     }
+}
+
+impl ProviderDef for ChatGptCodexProvider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,

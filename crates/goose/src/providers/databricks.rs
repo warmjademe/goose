@@ -525,9 +525,7 @@ impl DatabricksProvider {
     }
 }
 
-impl ProviderDef for DatabricksProvider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for DatabricksProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             DATABRICKS_PROVIDER_NAME,
@@ -542,6 +540,10 @@ impl ProviderDef for DatabricksProvider {
             ],
         )
     }
+}
+
+impl ProviderDef for DatabricksProvider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,

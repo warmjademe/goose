@@ -582,9 +582,7 @@ fn write_mcp_config_file(state_dir: &Path, json: &str) -> Result<NamedTempFile, 
     Ok(tmp)
 }
 
-impl ProviderDef for ClaudeCodeProvider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for ClaudeCodeProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             CLAUDE_CODE_PROVIDER_NAME,
@@ -603,6 +601,10 @@ impl ProviderDef for ClaudeCodeProvider {
             )],
         )
     }
+}
+
+impl ProviderDef for ClaudeCodeProvider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,
