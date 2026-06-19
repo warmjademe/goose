@@ -11,13 +11,13 @@ use axum::{
         ws::{rejection::WebSocketUpgradeRejection, WebSocketUpgrade},
         State,
     },
-    http::{header, HeaderName, Method, Request},
-    response::Response,
+    http::{header, HeaderName, HeaderValue, Method, Request},
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Router,
 };
 use serde_json::Value;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::acp::server_factory::AcpServer;
 
@@ -82,12 +82,25 @@ pub(crate) fn method_requires_session_header(method: &str) -> bool {
 
 async fn handle_get(
     ws_upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
-    State(state): State<Arc<connection::ConnectionRegistry>>,
+    registry: Arc<connection::ConnectionRegistry>,
     request: Request<Body>,
+    ws_allowed_origins: Option<Arc<[HeaderValue]>>,
 ) -> Response {
     match ws_upgrade {
-        Ok(ws) => websocket::handle_ws_upgrade(state, ws).await,
-        Err(_) => http::handle_get(state, request).await,
+        Ok(ws) => {
+            if ws_allowed_origins
+                .as_deref()
+                .is_some_and(|allowed_origins| !websocket_origin_allowed(&request, allowed_origins))
+            {
+                return (
+                    axum::http::StatusCode::FORBIDDEN,
+                    "Forbidden: WebSocket Origin is not allowed",
+                )
+                    .into_response();
+            }
+            websocket::handle_ws_upgrade(registry, ws).await
+        }
+        Err(_) => http::handle_get(registry, request).await,
     }
 }
 
@@ -95,9 +108,44 @@ async fn health() -> &'static str {
     "ok"
 }
 
-fn acp_cors_layer() -> CorsLayer {
+fn acp_origin_allowed(origin: &HeaderValue, additional_allowed_origins: &[HeaderValue]) -> bool {
+    if !additional_allowed_origins.is_empty() {
+        return additional_allowed_origins
+            .iter()
+            .any(|allowed_origin| allowed_origin == origin);
+    }
+
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+
+    url.host_str()
+        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]"))
+}
+
+fn websocket_origin_allowed(
+    request: &Request<Body>,
+    additional_allowed_origins: &[HeaderValue],
+) -> bool {
+    request
+        .headers()
+        .get(header::ORIGIN)
+        .is_none_or(|origin| acp_origin_allowed(origin, additional_allowed_origins))
+}
+
+fn acp_cors_layer(additional_allowed_origins: Vec<HeaderValue>) -> CorsLayer {
     CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::predicate(move |origin, _request_parts| {
+            acp_origin_allowed(origin, &additional_allowed_origins)
+        }))
         .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers([
             header::CONTENT_TYPE,
@@ -116,21 +164,41 @@ fn acp_cors_layer() -> CorsLayer {
         ])
 }
 
-fn create_acp_routes(server: Arc<AcpServer>) -> Router {
+fn create_acp_routes(
+    server: Arc<AcpServer>,
+    ws_allowed_origins: Option<Vec<HeaderValue>>,
+) -> Router {
     let registry = Arc::new(connection::ConnectionRegistry::new(server));
+    let ws_allowed_origins: Option<Arc<[HeaderValue]>> = ws_allowed_origins.map(Into::into);
 
     Router::new()
         .route("/acp", post(http::handle_post).with_state(registry.clone()))
-        .route("/acp", get(handle_get).with_state(registry.clone()))
+        .route(
+            "/acp",
+            get({
+                let ws_allowed_origins = ws_allowed_origins.clone();
+                move |ws_upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
+                      State(registry): State<Arc<connection::ConnectionRegistry>>,
+                      request: Request<Body>| {
+                    handle_get(ws_upgrade, registry, request, ws_allowed_origins.clone())
+                }
+            })
+            .with_state(registry.clone()),
+        )
         .route("/acp", delete(http::handle_delete).with_state(registry))
 }
 
 pub fn create_acp_router(server: Arc<AcpServer>) -> Router {
-    create_acp_routes(server).layer(acp_cors_layer())
+    create_acp_routes(server, Some(Vec::new())).layer(acp_cors_layer(Vec::new()))
 }
 
-pub fn create_router(server: Arc<AcpServer>, secret_key: String, require_token: bool) -> Router {
-    let mut acp_routes = create_acp_routes(server);
+pub fn create_router(
+    server: Arc<AcpServer>,
+    secret_key: String,
+    require_token: bool,
+    additional_allowed_origins: Vec<HeaderValue>,
+) -> Router {
+    let mut acp_routes = create_acp_routes(server, Some(additional_allowed_origins.clone()));
     if require_token {
         acp_routes = acp_routes.layer(axum::middleware::from_fn_with_state(
             secret_key.clone(),
@@ -141,5 +209,5 @@ pub fn create_router(server: Arc<AcpServer>, secret_key: String, require_token: 
         .route("/health", get(health))
         .route("/status", get(health))
         .merge(super::mcp_app_proxy::routes(secret_key))
-        .layer(acp_cors_layer())
+        .layer(acp_cors_layer(additional_allowed_origins))
 }
