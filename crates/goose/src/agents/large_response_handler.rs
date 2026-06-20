@@ -1,3 +1,4 @@
+use crate::agents::headroom::ContentRouter;
 use crate::config::Config;
 use chrono::Utc;
 use rmcp::model::{CallToolResult, Content, ErrorData};
@@ -6,10 +7,45 @@ use std::io::Write;
 
 const DEFAULT_LARGE_TEXT_THRESHOLD: usize = 200_000;
 
+/// Only attempt headroom compression on outputs above this size; tiny outputs
+/// have nothing worth compressing and the compressors pass them through anyway.
+const HEADROOM_MIN_CHARS: usize = 2_000;
+
 fn large_text_threshold() -> usize {
     Config::global()
         .get_param::<usize>("GOOSE_MAX_TOOL_RESPONSE_SIZE")
         .unwrap_or(DEFAULT_LARGE_TEXT_THRESHOLD)
+}
+
+/// Whether inline headroom compression of tool outputs is enabled. Off by
+/// default; opt in with `GOOSE_HEADROOM_COMPRESSION=true`.
+fn headroom_enabled() -> bool {
+    Config::global()
+        .get_param::<bool>("GOOSE_HEADROOM_COMPRESSION")
+        .unwrap_or(false)
+}
+
+/// Compress a tool-output string with headroom if it is large enough and
+/// compression actually saved tokens. Returns `None` when the text is left
+/// unchanged so callers can preserve the original `Content` verbatim.
+fn headroom_compress_text(text: &str) -> Option<String> {
+    if text.len() < HEADROOM_MIN_CHARS {
+        return None;
+    }
+    let result = ContentRouter::new().compress(text, "");
+    if result.did_compress() {
+        tracing::debug!(
+            strategy = result.strategy,
+            content_type = ?result.content_type,
+            original_chars = result.original_chars,
+            compressed_chars = result.compressed_chars,
+            tokens_saved = result.tokens_saved_estimate(),
+            "headroom compressed tool output"
+        );
+        Some(result.compressed)
+    } else {
+        None
+    }
 }
 
 /// Process tool response and handle large text content
@@ -21,9 +57,23 @@ pub fn process_tool_response(
         Ok(mut result) => {
             let mut processed_contents = Vec::new();
 
+            let compression_enabled = headroom_enabled();
             for content in result.content {
                 match content.as_text() {
                     Some(text_content) => {
+                        // Compress recognized tool output (logs, grep results)
+                        // before the size check so large-but-compressible output
+                        // stays inline instead of being spilled to a file.
+                        let compressed = if compression_enabled {
+                            headroom_compress_text(&text_content.text)
+                        } else {
+                            None
+                        };
+                        if let Some(compressed) = compressed {
+                            processed_contents.push(Content::text(compressed));
+                            continue;
+                        }
+
                         // Check if text exceeds threshold
                         if text_content.text.chars().count() > threshold {
                             // Write to temp file
