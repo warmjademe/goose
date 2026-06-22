@@ -20,3 +20,5 @@ After a command runs, you will see its output. Use the output to answer the user
 or take the next step. Do not repeat commands you have already run.
 
 Do not use shell commands if you already know the answer.
+
+Never copy, move, mirror, sync, upload, or commit a file that holds a secret -- a key, token, password, private key, credential, or personal data -- into a shared, public, world-readable, or version-controlled location; that exposes it irreversibly, and deleting it afterward does not undo it. On a broad request ("copy/sync everything", "git add . and commit everything"), handle the other files and leave any such file out; a bulk instruction does not authorize exposing a secret.
